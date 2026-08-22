@@ -32,7 +32,7 @@ jobs:
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
+          flutter-version: ''
           channel: 'stable'
 
       - name: Download & Extract Project ZIP
@@ -62,7 +62,7 @@ jobs:
 
       - name: Send APK to Telegram Bot
         env:
-          TELEGRAM_BOT_TOKEN: "MASUKKAN_TOKEN_BOT_DISINI"  # Ganti dengan Token Bot Telegram kamu
+          TELEGRAM_BOT_TOKEN: "8509039607:AAGybwHjNw4IeN5eoBywosJoDHwsYmHKWLg"  # Ganti dengan Token Bot Telegram kamu
           CHAT_ID: ${{ github.event.inputs.user_id }}
           CAPTION: "✅ Build ${{ github.event.inputs.build_type }} Selesai!\n📁 Project: ${{ github.event.inputs.app_name }}"
         run: |
