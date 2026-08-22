@@ -1,0 +1,21 @@
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL website'
+        required: false
+      app_name:
+        description: 'Nama Aplikasi'
+        required: true
+      package_name:
+        description: 'Package Name'
+        required: false
+      user_id:
+        description: 'User ID Telegram'
+        required: true
+      zip_url:
+        description: 'URL file ZIP'
+        required: true
+      build_type:
+        description: 'Debug or Release'
+        required: false
