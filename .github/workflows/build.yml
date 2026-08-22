@@ -29,11 +29,11 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-         - name: Setup Flutter SDK
-     uses: subosito/flutter-action@v2
-     with:
-       flutter-version: '3.19.0'
-       channel: 'stable'
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
 
       - name: Download & Extract Project ZIP
         run: |
@@ -52,7 +52,7 @@ jobs:
           flutter pub get
 
           echo "Building APK (${{ github.event.inputs.build_type }})..."
-                    if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
+          if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
             flutter build apk --release --android-skip-build-dependency-validation
           else
             flutter build apk --debug --android-skip-build-dependency-validation
@@ -60,7 +60,7 @@ jobs:
 
       - name: Send APK to Telegram Bot
         env:
-          TELEGRAM_BOT_TOKEN: "8509039607:AAGybwHjNw4IeN5eoBywosJoDHwsYmHKWLg"  # Ganti dengan Token Bot Telegram kamu
+          TELEGRAM_BOT_TOKEN: "8509039607:AAGybwHjNw4IeN5eoBywosJoDHwsYmHKWLg"
           CHAT_ID: ${{ github.event.inputs.user_id }}
           CAPTION: "✅ Build ${{ github.event.inputs.build_type }} Selesai!\n📁 Project: ${{ github.event.inputs.app_name }}"
         run: |
