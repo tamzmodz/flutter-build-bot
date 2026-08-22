@@ -52,12 +52,10 @@ jobs:
           flutter pub get
 
           echo "Building APK (${{ github.event.inputs.build_type }})..."
-          if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
-            flutter build apk --release
-            echo "APK_PATH=build/app/outputs/flutter-apk/app-release.apk" >> $GITHUB_ENV
+                    if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
+            flutter build apk --release --android-skip-build-dependency-validation
           else
-            flutter build apk --debug
-            echo "APK_PATH=build/app/outputs/flutter-apk/app-debug.apk" >> $GITHUB_ENV
+            flutter build apk --debug --android-skip-build-dependency-validation
           fi
 
       - name: Send APK to Telegram Bot
