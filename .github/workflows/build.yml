@@ -1,3 +1,5 @@
+name: Build Flutter APK
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,3 +21,34 @@ on:
       build_type:
         description: 'Debug or Release'
         required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+
+      - name: Download Project ZIP
+        run: |
+          echo "Downloading ZIP from: ${{ github.event.inputs.zip_url }}"
+          curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
+          unzip -q project.zip -d extracted_project
+          ls -la extracted_project
+
+      - name: Build APK (Placeholder / Custom Script)
+        run: |
+          echo "Mulai kompilasi tipe: ${{ github.event.inputs.build_type }}"
+          # Tambahkan perintah flutter build apk kamu di sini nanti
