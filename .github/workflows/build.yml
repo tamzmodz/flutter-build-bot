@@ -1,19 +1,13 @@
-name: Build Flutter APK
+name: Build Flutter APK & Send to Telegram
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'URL website'
-        required: false
       app_name:
         description: 'Nama Aplikasi'
         required: true
-      package_name:
-        description: 'Package Name'
-        required: false
       user_id:
-        description: 'User ID Telegram'
+        description: 'ID Telegram User'
         required: true
       zip_url:
         description: 'URL file ZIP'
@@ -38,17 +32,44 @@ jobs:
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.16.0'
+          flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: Download Project ZIP
+      - name: Download & Extract Project ZIP
         run: |
-          echo "Downloading ZIP from: ${{ github.event.inputs.zip_url }}"
+          echo "Downloading ZIP..."
           curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
-          unzip -q project.zip -d extracted_project
-          ls -la extracted_project
+          unzip -q project.zip -d my_project
+          cd my_project
+          
+          # Masuk ke folder project (jika terbungkus di dalam folder zip)
+          EXTRACTED_DIR=$(ls -d */ | head -n 1)
+          if [ -d "$EXTRACTED_DIR" ]; then
+            cd "$EXTRACTED_DIR"
+          fi
+          
+          echo "Running flutter pub get..."
+          flutter pub get
 
-      - name: Build APK (Placeholder / Custom Script)
+          echo "Building APK (${{ github.event.inputs.build_type }})..."
+          if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
+            flutter build apk --release
+            echo "APK_PATH=build/app/outputs/flutter-apk/app-release.apk" >> $GITHUB_ENV
+          else
+            flutter build apk --debug
+            echo "APK_PATH=build/app/outputs/flutter-apk/app-debug.apk" >> $GITHUB_ENV
+          fi
+
+      - name: Send APK to Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: "MASUKKAN_TOKEN_BOT_DISINI"  # Ganti dengan Token Bot Telegram kamu
+          CHAT_ID: ${{ github.event.inputs.user_id }}
+          CAPTION: "✅ Build ${{ github.event.inputs.build_type }} Selesai!\n📁 Project: ${{ github.event.inputs.app_name }}"
         run: |
-          echo "Mulai kompilasi tipe: ${{ github.event.inputs.build_type }}"
-          # Tambahkan perintah flutter build apk kamu di sini nanti
+          APK_FILE=$(find . -name "*.apk" | head -n 1)
+          echo "Found APK: $APK_FILE"
+          
+          curl -F chat_id="$CHAT_ID" \
+               -F document=@"$APK_FILE" \
+               -F caption="$CAPTION" \
+               "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument"
