@@ -47,6 +47,8 @@ jobs:
           if [ -d "$EXTRACTED_DIR" ]; then
             cd "$EXTRACTED_DIR"
           fi
+
+          flutter pub upgrade font_awesome_flutter --major-versions
           
           echo "Running flutter pub get..."
           flutter pub get
