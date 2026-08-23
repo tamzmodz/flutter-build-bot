@@ -15,16 +15,18 @@ on:
       build_type:
         description: 'Debug or Release'
         required: false
+        default: 'Debug'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Java JDK
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -34,58 +36,166 @@ jobs:
         with:
           flutter-version: '3.47.1'
           channel: 'stable'
+          cache: true
 
       - name: Download & Extract Project ZIP
+        env:
+          ZIP_URL: ${{ github.event.inputs.zip_url }}
         run: |
-          echo "Downloading ZIP..."
-          curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
-          unzip -q project.zip -d my_project
-          
-          # Cari folder yang berisi file pubspec.yaml secara otomatis
-          PROJECT_DIR=$(find my_project -name "pubspec.yaml" -exec dirname {} \;)
-          cd "$PROJECT_DIR"
-          
-          echo "Current directory: $(pwd)"
+          set -e
 
+          echo "======================================"
+          echo "Downloading Flutter Project ZIP..."
+          echo "======================================"
+
+          curl -fL "$ZIP_URL" -o project.zip
+
+          echo "Extracting project..."
+          rm -rf my_project
+          mkdir -p my_project
+
+          unzip -q project.zip -d my_project
+
+          echo "Searching for pubspec.yaml..."
+
+          PROJECT_DIR=$(find my_project -name "pubspec.yaml" -type f -print -quit | xargs dirname)
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/pubspec.yaml" ]; then
+            echo "ERROR: pubspec.yaml tidak ditemukan!"
+            exit 1
+          fi
+
+          cd "$PROJECT_DIR"
+
+          echo "Current directory:"
+          pwd
+
+          echo ""
+          echo "======================================"
+          echo "Original pubspec.yaml"
+          echo "======================================"
+
+          cat pubspec.yaml
+
+          echo ""
           echo "Removing old pubspec.lock..."
           rm -f pubspec.lock
 
-          echo "Updating pubspec.yaml to force font_awesome_flutter 10.4.0..."
-          # Hapus baris font_awesome_flutter yang lama jika ada, lalu tambahkan versi 10.4.0
-          sed -i '/font_awesome_flutter/d' pubspec.yaml
-          
-          # Tambahkan di bawah baris dependencies:
-          sed -i '/dependencies:/a \  font_awesome_flutter: ^10.4.0' pubspec.yaml
+          echo ""
+          echo "======================================"
+          echo "Setting Font Awesome 11.0.0"
+          echo "======================================"
 
-          # Menambahkan konfigurasi ndkVersion ke file Gradle
-          for f in $(find . -name "build.gradle" -o -name "build.gradle.kts"); do
-            if grep -q "defaultConfig" "$f"; then
-              sed -i '/defaultConfig {/a \        ndkVersion = "28.2.13676358"' "$f"
-            elif grep -q "android {" "$f"; then
-              sed -i '/android {/a \    ndkVersion = "28.2.13676358"' "$f"
+          # Hapus semua deklarasi font_awesome_flutter
+          sed -i '/^[[:space:]]*font_awesome_flutter:/d' pubspec.yaml
+
+          # Tambahkan Font Awesome 11.0.0 tepat di bawah dependencies:
+          sed -i '/^dependencies:/a\  font_awesome_flutter: 11.0.0' pubspec.yaml
+
+          echo ""
+          echo "Checking Font Awesome version..."
+
+          grep -n "font_awesome_flutter" pubspec.yaml || {
+            echo "ERROR: Gagal menambahkan font_awesome_flutter!"
+            exit 1
+          }
+
+          echo ""
+          echo "======================================"
+          echo "Updated pubspec.yaml"
+          echo "======================================"
+
+          cat pubspec.yaml
+
+          echo ""
+          echo "======================================"
+          echo "Configuring Android NDK"
+          echo "======================================"
+
+          # Tambahkan NDK version hanya jika belum ada.
+          while IFS= read -r -d '' f; do
+            echo "Checking: $f"
+
+            if grep -q "ndkVersion" "$f"; then
+              echo "ndkVersion already exists in $f"
+            else
+              if grep -q "android {" "$f"; then
+                sed -i '/android {/a\    ndkVersion = "28.2.13676358"' "$f"
+                echo "Added ndkVersion to $f"
+              fi
             fi
-          done
-          
-          echo "Running flutter pub get..."
+          done < <(find . -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0)
+
+          echo ""
+          echo "======================================"
+          echo "Flutter Pub Get"
+          echo "======================================"
+
+          flutter clean
           flutter pub get
 
-          echo "Building APK (${{ github.event.inputs.build_type }})..."
-          if [ "${{ github.event.inputs.build_type }}" = "Release" ]; then
+          echo ""
+          echo "======================================"
+          echo "Checking Installed Font Awesome"
+          echo "======================================"
+
+          flutter pub deps | grep font_awesome_flutter || true
+
+          echo ""
+          echo "======================================"
+          echo "Building APK"
+          echo "======================================"
+
+          BUILD_TYPE="${{ github.event.inputs.build_type }}"
+
+          if [ "$BUILD_TYPE" = "Release" ]; then
+            echo "Building RELEASE APK..."
             flutter build apk --release --android-skip-build-dependency-validation
           else
+            echo "Building DEBUG APK..."
             flutter build apk --debug --android-skip-build-dependency-validation
           fi
 
+          echo ""
+          echo "======================================"
+          echo "APK Build Completed"
+          echo "======================================"
+
+          find build -name "*.apk" -type f -print
+
       - name: Send APK to Telegram Bot
         env:
-          TELEGRAM_BOT_TOKEN: "8509039607:AAGybwHjNw4IeN5eoBywosJoDHwsYmHKWLg"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.user_id }}
-          CAPTION: "✅ Build ${{ github.event.inputs.build_type }} Selesai!\n📁 Project: ${{ github.event.inputs.app_name }}"
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          BUILD_TYPE: ${{ github.event.inputs.build_type }}
         run: |
-          APK_FILE=$(find . -name "*.apk" | head -n 1)
-          echo "Found APK: $APK_FILE"
-          
-          curl -F chat_id="$CHAT_ID" \
-               -F document=@"$APK_FILE" \
-               -F caption="$CAPTION" \
-               "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument"
+          set -e
+
+          echo "Searching APK..."
+
+          APK_FILE=$(find . -name "*.apk" -type f | head -n 1)
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: APK tidak ditemukan!"
+            exit 1
+          fi
+
+          echo "APK found:"
+          echo "$APK_FILE"
+
+          CAPTION="✅ Build ${BUILD_TYPE} Selesai!
+          📁 Project: ${APP_NAME}"
+
+          echo "Sending APK to Telegram..."
+
+          curl -f \
+            -F chat_id="$CHAT_ID" \
+            -F document=@"$APK_FILE" \
+            -F caption="$CAPTION" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument"
+
+          echo ""
+          echo "======================================"
+          echo "APK berhasil dikirim ke Telegram!"
+          echo "======================================"
