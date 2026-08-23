@@ -50,9 +50,12 @@ jobs:
           echo "Removing old pubspec.lock..."
           rm -f pubspec.lock
 
-          echo "Force-patching pubspec.yaml to use font_awesome_flutter 10.4.0..."
-          # Mengganti baris font_awesome_flutter apa pun versinya menjadi ^10.4.0 secara mutlak
-          sed -i '/font_awesome_flutter:/c\  font_awesome_flutter: ^10.4.0' pubspec.yaml
+          echo "Updating pubspec.yaml to force font_awesome_flutter 10.4.0..."
+          # Hapus baris font_awesome_flutter yang lama jika ada, lalu tambahkan versi 10.4.0
+          sed -i '/font_awesome_flutter/d' pubspec.yaml
+          
+          # Tambahkan di bawah baris dependencies:
+          sed -i '/dependencies:/a \  font_awesome_flutter: ^10.4.0' pubspec.yaml
 
           # Menambahkan konfigurasi ndkVersion ke file Gradle
           for f in $(find . -name "build.gradle" -o -name "build.gradle.kts"); do
