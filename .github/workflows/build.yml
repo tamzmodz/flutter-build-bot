@@ -50,17 +50,16 @@ jobs:
           echo "Removing old pubspec.lock..."
           rm -f pubspec.lock
 
-          echo "Forcing compatible Font Awesome version..."
-          flutter pub upgrade font_awesome_flutter --resolution-constraint "^10.4.0"
+          echo "Force-patching pubspec.yaml to use font_awesome_flutter 10.4.0..."
+          # Mengganti baris font_awesome_flutter apa pun versinya menjadi ^10.4.0 secara mutlak
+          sed -i '/font_awesome_flutter:/c\  font_awesome_flutter: ^10.4.0' pubspec.yaml
 
-          # Menambahkan konfigurasi ndkVersion secara aman ke file build.gradle atau build.gradle.kts
+          # Menambahkan konfigurasi ndkVersion ke file Gradle
           for f in $(find . -name "build.gradle" -o -name "build.gradle.kts"); do
             if grep -q "defaultConfig" "$f"; then
               sed -i '/defaultConfig {/a \        ndkVersion = "28.2.13676358"' "$f"
-              echo "Added ndkVersion to $f"
             elif grep -q "android {" "$f"; then
               sed -i '/android {/a \    ndkVersion = "28.2.13676358"' "$f"
-              echo "Added ndkVersion to $f"
             fi
           done
           
