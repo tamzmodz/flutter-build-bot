@@ -50,16 +50,23 @@ jobs:
           echo "Removing old pubspec.lock..."
           rm -f pubspec.lock
 
-          echo "Fixing Font Awesome Version to stable 10.4.0..."
-          flutter pub add font_awesome_flutter:^10.4.0
+          echo "Fixing Font Awesome version in pubspec.yaml..."
+          # Mengganti versi font_awesome_flutter secara langsung agar tidak menarik versi 10.12.0
+          if grep -q "font_awesome_flutter" pubspec.yaml; then
+            sed -i 's/font_awesome_flutter:.*/font_awesome_flutter: ^10.4.0/g' pubspec.yaml
+          else
+            echo "  font_awesome_flutter: ^10.4.0" >> pubspec.yaml
+          fi
 
-          # Mengatasi konflik NDK secara otomatis
-          if [ -f "android/app/build.gradle.kts" ]; then
-            echo "Updating NDK version in build.gradle.kts..."
-            sed -i '/android {/a \    ndkVersion = "28.2.13676358"' android/app/build.gradle.kts
-          elif [ -f "android/app/build.gradle" ]; then
-            echo "Updating NDK version in build.gradle..."
-            sed -i '/defaultConfig {/a \        ndkVersion "28.2.13676358"' android/app/build.gradle
+          # Menambahkan konfigurasi ndkVersion secara otomatis ke file Gradle
+          GRADLE_FILE=$(find . -name "build.gradle*" | head -n 1)
+          if [ -f "$GRADLE_FILE" ]; then
+            echo "Adding ndkVersion to $GRADLE_FILE..."
+            if grep -q "defaultConfig" "$GRADLE_FILE"; then
+              sed -i '/defaultConfig {/a \        ndkVersion = "28.2.13676358"' "$GRADLE_FILE"
+            elif grep -q "android {" "$GRADLE_FILE"; then
+              sed -i '/android {/a \    ndkVersion = "28.2.13676358"' "$GRADLE_FILE"
+            fi
           fi
           
           echo "Running flutter pub get..."
