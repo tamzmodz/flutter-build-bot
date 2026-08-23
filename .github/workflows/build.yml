@@ -40,13 +40,12 @@ jobs:
           echo "Downloading ZIP..."
           curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
           unzip -q project.zip -d my_project
-          cd my_project
           
-          # Masuk ke folder project (jika terbungkus di dalam folder zip)
-          EXTRACTED_DIR=$(ls -d */ | head -n 1)
-          if [ -d "$EXTRACTED_DIR" ]; then
-            cd "$EXTRACTED_DIR"
-          fi
+          # Cari folder yang berisi file pubspec.yaml secara otomatis
+          PROJECT_DIR=$(find my_project -name "pubspec.yaml" -exec dirname {} \;)
+          cd "$PROJECT_DIR"
+          
+          echo "Current directory: $(pwd)"
 
           echo "Fixing Font Awesome Version..."
           flutter pub add font_awesome_flutter:^10.6.0
