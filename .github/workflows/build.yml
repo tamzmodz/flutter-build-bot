@@ -50,8 +50,17 @@ jobs:
           echo "Removing old pubspec.lock..."
           rm -f pubspec.lock
 
-          echo "Fixing Font Awesome Version..."
-          flutter pub add font_awesome_flutter:^10.6.0
+          echo "Fixing Font Awesome Version to stable 10.4.0..."
+          flutter pub add font_awesome_flutter:^10.4.0
+
+          # Mengatasi konflik NDK secara otomatis
+          if [ -f "android/app/build.gradle.kts" ]; then
+            echo "Updating NDK version in build.gradle.kts..."
+            sed -i '/android {/a \    ndkVersion = "28.2.13676358"' android/app/build.gradle.kts
+          elif [ -f "android/app/build.gradle" ]; then
+            echo "Updating NDK version in build.gradle..."
+            sed -i '/defaultConfig {/a \        ndkVersion "28.2.13676358"' android/app/build.gradle
+          fi
           
           echo "Running flutter pub get..."
           flutter pub get
