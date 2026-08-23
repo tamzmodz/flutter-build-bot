@@ -48,12 +48,8 @@ jobs:
             cd "$EXTRACTED_DIR"
           fi
 
-                - name: Fix Font Awesome Version
-        run: |
-          cd my_project
-          # Paksa gunakan versi 10.6.0 agar tidak error tipe data FaIconData
+          echo "Fixing Font Awesome Version..."
           flutter pub add font_awesome_flutter:^10.6.0
-          flutter pub get
           
           echo "Running flutter pub get..."
           flutter pub get
