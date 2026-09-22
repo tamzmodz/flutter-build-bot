@@ -1,391 +1,62 @@
-name: Build APK & Send to Telegramj
+name: Build APK
 
 on:
   workflow_dispatch:
     inputs:
-      app_name:
-        description: "Nama Aplikasi"
+      tag:
+        description: "Release tag"
         required: true
-        type: string
+        default: "v1.0.0"
 
-      user_id:
-        description: "ID Telegram User"
-        required: true
-        type: string
-
-      zip_url:
-        description: "URL file ZIP project"
-        required: true
-        type: string
-
-      build_type:
-        description: "Debug or Release"
-        required: true
-        default: "Release"
-        type: choice
-        options:
-          - Debug
-          - Release
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build APK
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-
-      - name: Checkout Repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-
-      # ==========================================
-      # DOWNLOAD PROJECT
-      # ==========================================
-
-      - name: Download Project ZIP
-        env:
-          ZIP_URL: ${{ inputs.zip_url }}
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "DOWNLOADING PROJECT"
-          echo "=========================================="
-
-          rm -rf project.zip extracted_project project
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --retry-delay 2 \
-            --silent \
-            --show-error \
-            "$ZIP_URL" \
-            -o project.zip
-
-          test -s project.zip
-
-          mkdir -p extracted_project
-
-          unzip -q project.zip -d extracted_project
-
-          echo ""
-          echo "Searching project..."
-
-          FLUTTER_FILE=$(find extracted_project \
-            -type f \
-            -name "pubspec.yaml" \
-            -print -quit || true)
-
-          GRADLE_FILE=$(find extracted_project \
-            -type f \
-            -name "gradlew" \
-            -print -quit || true)
-
-          if [ -n "$FLUTTER_FILE" ]; then
-
-            PROJECT_DIR="$(dirname "$FLUTTER_FILE")"
-            BUILD_SYSTEM="flutter"
-
-          elif [ -n "$GRADLE_FILE" ]; then
-
-            PROJECT_DIR="$(dirname "$GRADLE_FILE")"
-            BUILD_SYSTEM="gradle"
-
-          else
-
-            echo ""
-            echo "ERROR: Project tidak dikenali."
-            echo ""
-            echo "Tidak ditemukan:"
-            echo "  pubspec.yaml"
-            echo "  gradlew"
-            echo ""
-
-            find extracted_project -maxdepth 5 -type f | head -n 100
-
-            exit 1
-          fi
-
-          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
-
-          echo ""
-          echo "=========================================="
-          echo "PROJECT DETECTED"
-          echo "=========================================="
-
-          echo "Build system: $BUILD_SYSTEM"
-          echo "Project: $PROJECT_DIR"
-
-          cp -a "$PROJECT_DIR" project
-
-          echo ""
-          echo "Project files:"
-          find project -maxdepth 2 -type f | head -n 100
-
-
-      # ==========================================
-      # JAVA
-      # ==========================================
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-
-      # ==========================================
-      # ANDROID SDK
-      # ==========================================
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-
-      # ==========================================
-      # ACCEPT ANDROID LICENSES
-      # ==========================================
-
-      - name: Accept Android SDK Licenses
+      - name: Build APK
+        working-directory: android
         run: |
-          set -euo pipefail
-
-          yes | sdkmanager --licenses >/dev/null || true
-
-          echo "Android SDK licenses accepted."
-
-
-      # ==========================================
-      # FLUTTER SDK
-      # ==========================================
-
-      - name: Setup Flutter
-        if: hashFiles('project/pubspec.yaml') != ''
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-
-      # ==========================================
-      # FLUTTER BUILD
-      # ==========================================
-
-      - name: Build Flutter APK
-        if: hashFiles('project/pubspec.yaml') != ''
-        working-directory: project
-        env:
-          BUILD_TYPE: ${{ inputs.build_type }}
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "FLUTTER BUILD"
-          echo "=========================================="
-
-          flutter --version
-
-          flutter clean
-
-          flutter pub get
-
-          if [ "$BUILD_TYPE" = "Release" ]; then
-            flutter build apk \
-              --release \
-              --android-skip-build-dependency-validation
-          else
-            flutter build apk \
-              --debug \
-              --android-skip-build-dependency-validation
-          fi
-
-          echo ""
-          echo "Flutter APK:"
-          find build -type f -name "*.apk" -print
-
-
-      # ==========================================
-      # NATIVE GRADLE BUILD
-      # ==========================================
-
-      - name: Build Native Android APK
-        if: hashFiles('project/pubspec.yaml') == '' && hashFiles('project/gradlew') != ''
-        working-directory: project
-        env:
-          BUILD_TYPE: ${{ inputs.build_type }}
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "NATIVE GRADLE BUILD"
-          echo "=========================================="
-
           chmod +x gradlew
+          ./gradlew assembleRelease
 
-          echo ""
-          echo "Gradle:"
-          ./gradlew --version
+      - name: Find APK
+        run: |
+          find android/app/build/outputs -type f -name "*.apk"
 
-          echo ""
-
-          if [ "$BUILD_TYPE" = "Release" ]; then
-
-            ./gradlew \
-              --no-daemon \
-              --stacktrace \
-              assembleRelease
-
+      - name: Get release tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-
-            ./gradlew \
-              --no-daemon \
-              --stacktrace \
-              assembleDebug
-
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
-
-          echo ""
-          echo "Gradle APK:"
-          find . -type f -name "*.apk" -print
-
-
-      # ==========================================
-      # FIND APK
-      # ==========================================
-
-      - name: Locate APK
-        id: apk
-        run: |
-          set -euo pipefail
-
-          APK_FILE=$(find project \
-            -type f \
-            -name "*.apk" \
-            -print \
-            | head -n 1)
-
-          if [ -z "$APK_FILE" ]; then
-            echo "ERROR: APK tidak ditemukan."
-            exit 1
-          fi
-
-          APK_FILE="$(realpath "$APK_FILE")"
-
-          echo "APK:"
-          echo "$APK_FILE"
-
-          echo "path=$APK_FILE" >> "$GITHUB_OUTPUT"
-
-
-      # ==========================================
-      # PREPARE APK
-      # ==========================================
-
-      - name: Prepare APK
-        id: prepare
-        env:
-          APP_NAME: ${{ inputs.app_name }}
-          BUILD_TYPE: ${{ inputs.build_type }}
-        run: |
-          set -euo pipefail
-
-          APK="${{ steps.apk.outputs.path }}"
-
-          SAFE_NAME=$(echo "$APP_NAME" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9._-]/-/g' \
-            | sed 's/--*/-/g' \
-            | sed 's/^-//' \
-            | sed 's/-$//')
-
-          [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
-
-          OUTPUT="build-${SAFE_NAME}-${BUILD_TYPE,,}.apk"
-
-          cp "$APK" "$OUTPUT"
-
-          echo "output=$OUTPUT" >> "$GITHUB_OUTPUT"
-
-          ls -lh "$OUTPUT"
-
-
-      # ==========================================
-      # GITHUB RELEASE
-      # ==========================================
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "build-${{ github.run_number }}"
-          name: "${{ inputs.app_name }} - Build ${{ github.run_number }}"
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: APK ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
-          files: ${{ steps.prepare.outputs.output }}
-
-
-      # ==========================================
-      # TELEGRAM
-      # ==========================================
-
-      - name: Send APK to Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ inputs.user_id }}
-          APP_NAME: ${{ inputs.app_name }}
-          BUILD_TYPE: ${{ inputs.build_type }}
-          APK_FILE: ${{ steps.prepare.outputs.output }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-            echo "ERROR: TELEGRAM_BOT_TOKEN belum tersedia."
-            exit 1
-          fi
-
-          if [ -z "${CHAT_ID:-}" ]; then
-            echo "ERROR: Telegram User ID kosong."
-            exit 1
-          fi
-
-          if [ ! -f "$APK_FILE" ]; then
-            echo "ERROR: APK tidak ditemukan."
-            exit 1
-          fi
-
-          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/build-${GITHUB_RUN_NUMBER}"
-
-          CAPTION="✅ APK Build Selesai
-
-          📱 App: ${APP_NAME}
-          🔧 Build: ${BUILD_TYPE}
-          🔢 Build: #${GITHUB_RUN_NUMBER}
-
-          🔗 Download:
-          ${RELEASE_URL}"
-
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            --request POST \
-            --form "chat_id=${CHAT_ID}" \
-            --form "document=@${APK_FILE}" \
-            --form "caption=${CAPTION}" \
-            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument"
-
-          echo ""
-          echo "=========================================="
-          echo "SUCCESS"
-          echo "=========================================="
-
-          echo "Release:"
-          echo "$RELEASE_URL"
+          files: |
+            android/app/build/outputs/apk/release/*.apk
