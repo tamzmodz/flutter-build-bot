@@ -70,8 +70,15 @@ jobs:
           test -s downloaded.zip
 
           echo ""
-          echo "ZIP:"
+          echo "Downloaded ZIP:"
           ls -lh downloaded.zip
+
+          echo ""
+          echo "Checking ZIP..."
+
+          unzip -t downloaded.zip >/dev/null
+
+          echo "ZIP is valid."
 
           echo ""
           echo "Extracting..."
@@ -80,11 +87,11 @@ jobs:
 
           echo ""
           echo "Project files:"
-          find project -maxdepth 3 -type f | head -100
+          find project -maxdepth 4 -type f | head -200
 
 
       # =========================================
-      # JAVA 17
+      # JAVA
       # =========================================
 
       - name: Setup Java 17
@@ -97,13 +104,6 @@ jobs:
 
       # =========================================
       # ANDROID SDK
-      #
-      # GitHub ubuntu-24.04 runner sudah
-      # menyediakan Android SDK.
-      #
-      # JANGAN menggunakan setup-android@v3
-      # karena versi tersebut dapat meminta
-      # package "tools" yang sudah obsolete.
       # =========================================
 
       - name: Setup Android SDK Environment
@@ -118,36 +118,45 @@ jobs:
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 
           if [ ! -d "$SDK" ]; then
-            echo "ERROR: Android SDK directory not found:"
+            echo "ERROR: Android SDK not found."
+            echo "Checked:"
             echo "$SDK"
             exit 1
           fi
 
-          echo "SDK: $SDK"
+          echo "Android SDK:"
+          echo "$SDK"
 
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
           echo "$SDK/platform-tools" >> "$GITHUB_PATH"
-          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
           if [ -d "$SDK/cmdline-tools/latest/bin" ]; then
-            echo "Using:"
-            echo "$SDK/cmdline-tools/latest/bin"
+
+            echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
           elif [ -d "$SDK/cmdline-tools/16.0/bin" ]; then
-            echo "Using:"
-            echo "$SDK/cmdline-tools/16.0/bin"
 
             echo "$SDK/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+
           else
+
             echo "ERROR: Android command line tools not found."
-            find "$SDK/cmdline-tools" -maxdepth 3 -type f 2>/dev/null | head -50 || true
+
+            find "$SDK/cmdline-tools" \
+              -maxdepth 3 \
+              -type f \
+              2>/dev/null \
+              | head -100 || true
+
             exit 1
+
           fi
 
 
       # =========================================
-      # ACCEPT LICENSES
+      # ANDROID LICENSES
       # =========================================
 
       - name: Accept Android SDK Licenses
@@ -155,20 +164,20 @@ jobs:
         run: |
           set -e
 
-          SDK="${ANDROID_HOME}"
-
-          echo "Accepting Android SDK licenses..."
+          echo "========================================="
+          echo "Android SDK licenses"
+          echo "========================================="
 
           yes | sdkmanager \
-            --sdk_root="$SDK" \
+            --sdk_root="$ANDROID_HOME" \
             --licenses \
             >/dev/null 2>&1 || true
 
-          echo "Android SDK licenses processed."
+          echo "Licenses processed."
 
 
       # =========================================
-      # VERIFY ANDROID SDK
+      # VERIFY SDK
       # =========================================
 
       - name: Verify Android SDK
@@ -179,14 +188,6 @@ jobs:
           echo "========================================="
           echo "Verify Android SDK"
           echo "========================================="
-
-          echo ""
-          echo "ANDROID_HOME:"
-          echo "$ANDROID_HOME"
-
-          echo ""
-          echo "ANDROID_SDK_ROOT:"
-          echo "$ANDROID_SDK_ROOT"
 
           echo ""
           echo "Java:"
@@ -201,7 +202,7 @@ jobs:
           sdkmanager --version
 
           echo ""
-          echo "Installed Android packages:"
+          echo "Installed packages:"
           sdkmanager \
             --sdk_root="$ANDROID_HOME" \
             --list_installed \
@@ -239,8 +240,7 @@ jobs:
             PROJECT_TYPE="flutter"
 
             echo ""
-            echo "Detected:"
-            echo "Flutter project"
+            echo "Detected Flutter project."
 
           elif [ -n "$GRADLE_FILE" ]; then
 
@@ -248,8 +248,7 @@ jobs:
             PROJECT_TYPE="gradle"
 
             echo ""
-            echo "Detected:"
-            echo "Native Android Gradle project"
+            echo "Detected Native Android Gradle project."
 
           else
 
@@ -257,8 +256,12 @@ jobs:
             echo "ERROR: Could not detect project type."
             echo ""
 
-            echo "Project files:"
-            find project -maxdepth 6 -type f | head -300
+            echo "Project structure:"
+            find project \
+              -maxdepth 7 \
+              -type f \
+              | sort \
+              | head -500
 
             exit 1
 
@@ -286,7 +289,7 @@ jobs:
           echo "========================================="
 
           echo ""
-          echo "Root:"
+          echo "Project root:"
           echo "$PROJECT_ROOT"
 
           echo ""
@@ -296,7 +299,127 @@ jobs:
             -maxdepth 5 \
             -type f \
             | sort \
-            | head -400
+            | head -500
+
+
+      # =========================================
+      # DETECT ANDROID REQUIREMENTS
+      #
+      # Mencoba membaca compileSdk,
+      # buildToolsVersion dan ndkVersion.
+      # =========================================
+
+      - name: Detect Android SDK Requirements
+        if: env.PROJECT_TYPE == 'gradle'
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Detecting Android SDK requirements"
+          echo "========================================="
+
+          COMPILE_SDK=""
+          BUILD_TOOLS=""
+          NDK_VERSION=""
+
+          SEARCH_FILES=$(find . \
+            -type f \
+            \( \
+              -name "build.gradle" \
+              -o -name "build.gradle.kts" \
+              -o -name "gradle.properties" \
+            \) \
+            -print)
+
+          echo ""
+          echo "Gradle configuration files:"
+          echo "$SEARCH_FILES"
+
+          for FILE in $SEARCH_FILES; do
+
+            if [ -z "$COMPILE_SDK" ]; then
+              COMPILE_SDK=$(grep -Eo \
+                'compileSdk([[:space:]]*Version)?[[:space:]]*[=:]?[[:space:]]*[0-9]+' \
+                "$FILE" 2>/dev/null \
+                | grep -Eo '[0-9]+' \
+                | head -1 || true)
+            fi
+
+            if [ -z "$BUILD_TOOLS" ]; then
+              BUILD_TOOLS=$(grep -Eo \
+                'buildToolsVersion[[:space:]]*[=:]?[[:space:]]*["'\''][0-9.]+["'\'']' \
+                "$FILE" 2>/dev/null \
+                | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' \
+                | head -1 || true)
+            fi
+
+            if [ -z "$NDK_VERSION" ]; then
+              NDK_VERSION=$(grep -Eo \
+                'ndkVersion[[:space:]]*[=:]?[[:space:]]*["'\''][^"'\'']+["'\'']' \
+                "$FILE" 2>/dev/null \
+                | sed -E 's/.*["'\'']([^"'\'']+)["'\''].*/\1/' \
+                | head -1 || true)
+            fi
+
+          done
+
+          echo ""
+          echo "Detected:"
+          echo "COMPILE_SDK=$COMPILE_SDK"
+          echo "BUILD_TOOLS=$BUILD_TOOLS"
+          echo "NDK_VERSION=$NDK_VERSION"
+
+          echo "COMPILE_SDK=$COMPILE_SDK" >> "$GITHUB_ENV"
+          echo "BUILD_TOOLS=$BUILD_TOOLS" >> "$GITHUB_ENV"
+          echo "NDK_VERSION=$NDK_VERSION" >> "$GITHUB_ENV"
+
+
+      # =========================================
+      # INSTALL REQUIRED ANDROID PACKAGES
+      # =========================================
+
+      - name: Install Required Android Packages
+        if: env.PROJECT_TYPE == 'gradle'
+        shell: bash
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Installing required Android packages"
+          echo "========================================="
+
+          PACKAGES=""
+
+          if [ -n "$COMPILE_SDK" ]; then
+            PACKAGES="$PACKAGES platforms;android-$COMPILE_SDK"
+          fi
+
+          if [ -n "$BUILD_TOOLS" ]; then
+            PACKAGES="$PACKAGES build-tools;$BUILD_TOOLS"
+          fi
+
+          if [ -n "$NDK_VERSION" ]; then
+            PACKAGES="$PACKAGES ndk;$NDK_VERSION"
+          fi
+
+          if [ -z "$PACKAGES" ]; then
+            echo "No explicit Android SDK requirements detected."
+            echo "Using SDK packages already available on runner."
+            exit 0
+          fi
+
+          echo ""
+          echo "Packages:"
+          echo "$PACKAGES"
+
+          yes | sdkmanager \
+            --sdk_root="$ANDROID_HOME" \
+            $PACKAGES
+
+          echo ""
+          echo "Required Android packages installed."
 
 
       # =========================================
@@ -323,11 +446,11 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Flutter build"
+          echo "Flutter APK build"
           echo "========================================="
 
           echo ""
-          echo "Flutter version:"
+          echo "Flutter:"
           flutter --version
 
           echo ""
@@ -335,7 +458,7 @@ jobs:
           flutter clean
 
           echo ""
-          echo "Getting dependencies..."
+          echo "Dependencies..."
           flutter pub get
 
           echo ""
@@ -353,7 +476,7 @@ jobs:
 
 
       # =========================================
-      # NATIVE GRADLE PREPARATION
+      # GRADLE WRAPPER REPAIR
       # =========================================
 
       - name: Prepare Native Android Project
@@ -364,27 +487,176 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Native Android project"
+          echo "Preparing Native Android project"
           echo "========================================="
 
           chmod +x gradlew
 
-          echo ""
-          echo "Gradle version:"
-          ./gradlew --version
+          WRAPPER_DIR="gradle/wrapper"
+          WRAPPER_JAR="$WRAPPER_DIR/gradle-wrapper.jar"
+          WRAPPER_PROPERTIES="$WRAPPER_DIR/gradle-wrapper.properties"
 
           echo ""
-          echo "Gradle files:"
+          echo "Checking Gradle Wrapper..."
 
-          find . \
-            -maxdepth 4 \
-            \( \
-              -name "build.gradle" \
-              -o -name "build.gradle.kts" \
-              -o -name "settings.gradle" \
-              -o -name "settings.gradle.kts" \
-            \) \
+          if [ -f "$WRAPPER_JAR" ]; then
+
+            echo "Gradle Wrapper JAR found."
+
+          else
+
+            echo ""
+            echo "Gradle Wrapper JAR is missing."
+            echo "Repairing..."
+
+            if [ ! -f "$WRAPPER_PROPERTIES" ]; then
+
+              echo ""
+              echo "ERROR: gradle-wrapper.properties is missing."
+
+              echo ""
+              echo "Gradle-related files:"
+              find . \
+                -type f \
+                \( \
+                  -name "gradle-wrapper.properties" \
+                  -o -name "build.gradle" \
+                  -o -name "build.gradle.kts" \
+                  -o -name "settings.gradle" \
+                  -o -name "settings.gradle.kts" \
+                \) \
+                -print \
+                | sort
+
+              exit 1
+
+            fi
+
+            echo ""
+            echo "Wrapper properties:"
+            cat "$WRAPPER_PROPERTIES"
+
+            DISTRIBUTION_URL=$(grep '^distributionUrl=' \
+              "$WRAPPER_PROPERTIES" \
+              | sed 's/^distributionUrl=//' \
+              | sed 's/\\:/:/g')
+
+            if [ -z "$DISTRIBUTION_URL" ]; then
+
+              echo ""
+              echo "ERROR: distributionUrl not found."
+
+              exit 1
+
+            fi
+
+            echo ""
+            echo "Gradle distribution:"
+            echo "$DISTRIBUTION_URL"
+
+            echo ""
+            echo "Downloading Gradle distribution..."
+
+            rm -rf /tmp/gradle-repair
+
+            mkdir -p /tmp/gradle-repair
+
+            curl \
+              -L \
+              --fail \
+              --retry 5 \
+              --retry-delay 2 \
+              "$DISTRIBUTION_URL" \
+              -o /tmp/gradle-repair/gradle.zip
+
+            test -s /tmp/gradle-repair/gradle.zip
+
+            echo ""
+            echo "Testing Gradle archive..."
+
+            unzip -t \
+              /tmp/gradle-repair/gradle.zip \
+              >/dev/null
+
+            echo ""
+            echo "Extracting Gradle..."
+
+            mkdir -p /tmp/gradle-repair/extracted
+
+            unzip -q \
+              /tmp/gradle-repair/gradle.zip \
+              -d /tmp/gradle-repair/extracted
+
+            GRADLE_HOME=$(find /tmp/gradle-repair/extracted \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -type d \
+              -name "gradle-*" \
+              -print \
+              | head -1)
+
+            if [ -z "$GRADLE_HOME" ]; then
+
+              echo ""
+              echo "ERROR: Gradle directory was not found."
+
+              find /tmp/gradle-repair/extracted \
+                -maxdepth 2 \
+                -type f \
+                | head -100
+
+              exit 1
+
+            fi
+
+            echo ""
+            echo "Gradle home:"
+            echo "$GRADLE_HOME"
+
+            export PATH="$GRADLE_HOME/bin:$PATH"
+
+            echo ""
+            echo "Gradle version:"
+            gradle --version
+
+            echo ""
+            echo "Generating Gradle Wrapper..."
+
+            gradle wrapper
+
+            if [ ! -f "$WRAPPER_JAR" ]; then
+
+              echo ""
+              echo "ERROR: Gradle Wrapper JAR was not generated."
+
+              echo ""
+              echo "Wrapper directory:"
+              find "$WRAPPER_DIR" \
+                -maxdepth 2 \
+                -type f \
+                -print \
+                || true
+
+              exit 1
+
+            fi
+
+            echo ""
+            echo "Gradle Wrapper successfully repaired."
+
+          fi
+
+          echo ""
+          echo "Wrapper files:"
+          find "$WRAPPER_DIR" \
+            -maxdepth 2 \
+            -type f \
             -print
+
+          echo ""
+          echo "Testing wrapper..."
+
+          ./gradlew --version
 
 
       # =========================================
@@ -399,14 +671,25 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Gradle APK build"
+          echo "Native Android APK build"
           echo "========================================="
 
           chmod +x gradlew
 
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "ERROR: gradle-wrapper.jar is missing."
+            exit 1
+          fi
+
+          echo ""
+          echo "Gradle:"
+          ./gradlew --version
+
+          echo ""
+
           if [ "${{ inputs.build_type }}" = "release" ]; then
 
-            echo "Building RELEASE APK..."
+            echo "Building RELEASE..."
 
             ./gradlew \
               --no-daemon \
@@ -416,7 +699,7 @@ jobs:
 
           else
 
-            echo "Building DEBUG APK..."
+            echo "Building DEBUG..."
 
             ./gradlew \
               --no-daemon \
@@ -437,7 +720,7 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Searching for APK"
+          echo "Searching APK"
           echo "========================================="
 
           APK=""
@@ -466,20 +749,22 @@ jobs:
 
             echo ""
             echo "ERROR: APK was not found."
-            echo ""
 
+            echo ""
             echo "All APK files:"
             find . \
               -type f \
               -name "*.apk" \
-              -print || true
+              -print \
+              || true
 
             echo ""
             echo "Build output directories:"
             find "$PROJECT_ROOT" \
               -type d \
               -path "*/build/outputs*" \
-              -print || true
+              -print \
+              || true
 
             exit 1
 
@@ -504,6 +789,10 @@ jobs:
           SAFE_NAME=$(printf '%s' "${{ inputs.app_name }}" \
             | tr '[:upper:]' '[:lower:]' \
             | sed 's/[^a-z0-9._-]/-/g')
+
+          if [ -z "$SAFE_NAME" ]; then
+            SAFE_NAME="app"
+          fi
 
           OUTPUT_NAME="build-${SAFE_NAME}-${{ inputs.build_type }}.apk"
 
@@ -608,10 +897,10 @@ jobs:
         run: |
           echo ""
           echo "========================================="
-          echo "              BUILD SUCCESS"
+          echo "             BUILD SUCCESS"
           echo "========================================="
-          echo ""
 
+          echo ""
           echo "App:"
           echo "${{ inputs.app_name }}"
 
