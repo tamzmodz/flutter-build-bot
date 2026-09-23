@@ -31,15 +31,17 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       # =========================================================
       # CHECKOUT
       # =========================================================
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
+
       # =========================================================
-      # JAVA
+      # JAVA 17
       # =========================================================
 
       - name: Setup Java 17
@@ -48,11 +50,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+
       # =========================================================
-      # DOWNLOAD PROJECT
+      # DOWNLOAD ZIP
       # =========================================================
 
-      - name: Download Android project
+      - name: Download Android Project
         shell: bash
         env:
           ZIP_URL: ${{ inputs.zip_url }}
@@ -60,65 +63,96 @@ jobs:
           set -e
 
           rm -rf project
+          rm -f project.zip
+
           mkdir -p project
 
-          echo "Downloading project..."
+          echo "======================================"
+          echo "Downloading Android project..."
+          echo "======================================"
 
           curl -fL \
             --retry 5 \
             --retry-delay 3 \
             --connect-timeout 30 \
-            --max-time 600 \
+            --max-time 900 \
             "$ZIP_URL" \
             -o project.zip
 
-          echo "ZIP downloaded:"
+          echo ""
+          echo "Downloaded ZIP:"
           ls -lh project.zip
 
+          echo ""
+          echo "File type:"
           file project.zip
+
+          echo ""
+          echo "Extracting..."
 
           unzip -q project.zip -d project
 
-          echo "Extracted files:"
-          find project -maxdepth 3 -type f | head -100
+          echo ""
+          echo "Project files:"
+          find project -maxdepth 4 -type f | head -150
+
 
       # =========================================================
       # FIND GRADLE PROJECT
       # =========================================================
 
-      - name: Locate Gradle project
+      - name: Locate Gradle Project
         shell: bash
         run: |
           set -e
 
+          echo "Searching for Gradle project..."
+
           GRADLE_DIR=""
 
-          while IFS= read -r file; do
-            DIR="$(dirname "$file")"
+          while IFS= read -r FILE; do
+
+            DIR="$(dirname "$FILE")"
 
             if [ -f "$DIR/settings.gradle" ] || \
                [ -f "$DIR/settings.gradle.kts" ]; then
+
               GRADLE_DIR="$DIR"
               break
+
             fi
+
           done < <(
             find project \
-              \( -name settings.gradle -o -name settings.gradle.kts \) \
+              \( \
+                -name "settings.gradle" \
+                -o \
+                -name "settings.gradle.kts" \
+              \) \
               -type f
           )
 
           if [ -z "$GRADLE_DIR" ]; then
+            echo ""
             echo "::error::Gradle project tidak ditemukan."
-            echo "ZIP harus berisi project Android Gradle."
+            echo ""
+            echo "ZIP harus memiliki settings.gradle"
+            echo "atau settings.gradle.kts"
+            echo ""
+            find project -maxdepth 5 -type f | sort
             exit 1
           fi
 
           GRADLE_DIR="$(realpath "$GRADLE_DIR")"
 
+          echo ""
+          echo "======================================"
           echo "Gradle project:"
           echo "$GRADLE_DIR"
+          echo "======================================"
 
           echo "GRADLE_DIR=$GRADLE_DIR" >> "$GITHUB_ENV"
+
 
       # =========================================================
       # ANDROID SDK
@@ -139,11 +173,13 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Accepting Android SDK licenses..."
 
           "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
-          echo "Installing common Android SDK packages..."
+          echo ""
+          echo "Installing Android SDK packages..."
 
           "$SDKMANAGER" \
             "platform-tools" \
@@ -155,11 +191,12 @@ jobs:
             "build-tools;33.0.2" \
             || true
 
-          echo "Installed Android SDK:"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed || true
+          echo ""
+          echo "Android SDK preparation complete."
+
 
       # =========================================================
-      # GRADLE WRAPPER / GRADLE BOOTSTRAP
+      # GRADLE WRAPPER
       # =========================================================
 
       - name: Prepare Gradle
@@ -168,10 +205,19 @@ jobs:
         run: |
           set -e
 
+          echo "Checking Gradle..."
+
           chmod +x gradlew 2>/dev/null || true
 
-          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "Gradle wrapper JAR ditemukan."
+          # -----------------------------------------------------
+          # Normal wrapper
+          # -----------------------------------------------------
+
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ] && \
+             [ -f "gradle/wrapper/gradle-wrapper.properties" ] && \
+             [ -f "gradlew" ]; then
+
+            echo "Gradle wrapper lengkap ditemukan."
 
             chmod +x gradlew
 
@@ -182,11 +228,16 @@ jobs:
             exit 0
           fi
 
-          echo "Gradle wrapper JAR tidak ditemukan."
+          # -----------------------------------------------------
+          # Wrapper JAR missing
+          # -----------------------------------------------------
+
+          echo ""
+          echo "Gradle wrapper tidak lengkap."
           echo "Mencoba bootstrap Gradle..."
 
           if [ ! -f "gradle/wrapper/gradle-wrapper.properties" ]; then
-            echo "::error::gradle-wrapper.properties juga tidak ditemukan."
+            echo "::error::gradle-wrapper.properties tidak ditemukan."
             exit 1
           fi
 
@@ -203,6 +254,7 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Gradle distribution:"
           echo "$DISTRIBUTION_URL"
 
@@ -212,15 +264,28 @@ jobs:
           rm -rf "$GRADLE_HOME"
           mkdir -p "$GRADLE_HOME"
 
+          echo ""
+          echo "Downloading Gradle..."
+
           curl -fL \
             --retry 5 \
             --retry-delay 3 \
+            --connect-timeout 30 \
+            --max-time 600 \
             "$DISTRIBUTION_URL" \
             -o "$GRADLE_ZIP"
 
+          echo ""
+          echo "Extracting Gradle..."
+
           unzip -q "$GRADLE_ZIP" -d "$GRADLE_HOME"
 
-          GRADLE_BIN="$(find "$GRADLE_HOME" -type f -path '*/bin/gradle' | head -1)"
+          GRADLE_BIN="$(
+            find "$GRADLE_HOME" \
+              -type f \
+              -path "*/bin/gradle" \
+              | head -1
+          )"
 
           if [ -z "$GRADLE_BIN" ]; then
             echo "::error::Gradle binary tidak ditemukan."
@@ -229,12 +294,210 @@ jobs:
 
           chmod +x "$GRADLE_BIN"
 
+          echo ""
           "$GRADLE_BIN" --version
 
           echo "GRADLE_CMD=$GRADLE_BIN" >> "$GITHUB_ENV"
 
+
       # =========================================================
-      # BUILD
+      # REPAIR MISSING MIPMAP RESOURCES
+      # =========================================================
+
+      - name: Repair Missing Mipmap Resources
+        shell: bash
+        working-directory: ${{ env.GRADLE_DIR }}
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "Checking Android resources..."
+          echo "======================================"
+
+          MANIFEST="app/src/main/AndroidManifest.xml"
+          RES_DIR="app/src/main/res"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::AndroidManifest.xml tidak ditemukan."
+            exit 1
+          fi
+
+          mkdir -p "$RES_DIR"
+
+          # -----------------------------------------------------
+          # Generate valid fallback PNG
+          # -----------------------------------------------------
+
+          FALLBACK_DIR="/tmp/android-fallback"
+
+          rm -rf "$FALLBACK_DIR"
+          mkdir -p "$FALLBACK_DIR"
+
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          # Valid 1x1 PNG
+          png = base64.b64decode(
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+              "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+          )
+
+          Path("/tmp/android-fallback/fallback.png").write_bytes(png)
+          PY
+
+          # -----------------------------------------------------
+          # Find all @mipmap references
+          # -----------------------------------------------------
+
+          grep -oE '@mipmap/[A-Za-z0-9_]+' "$MANIFEST" \
+            | sed 's#@mipmap/##' \
+            | sort -u \
+            > /tmp/mipmap_names.txt || true
+
+          echo ""
+          echo "Mipmap references:"
+
+          cat /tmp/mipmap_names.txt || true
+
+          # -----------------------------------------------------
+          # Repair every missing mipmap
+          # -----------------------------------------------------
+
+          while IFS= read -r NAME; do
+
+            [ -z "$NAME" ] && continue
+
+            echo ""
+            echo "Checking: $NAME"
+
+            FOUND=""
+
+            while IFS= read -r FILE; do
+
+              if [ -f "$FILE" ]; then
+                FOUND="$FILE"
+                break
+              fi
+
+            done < <(
+              find "$RES_DIR" \
+                -type f \
+                \( \
+                  -name "${NAME}.png" \
+                  -o \
+                  -name "${NAME}.webp" \
+                  -o \
+                  -name "${NAME}.xml" \
+                \)
+            )
+
+            if [ -n "$FOUND" ]; then
+
+              echo "OK:"
+              echo "$FOUND"
+
+              continue
+
+            fi
+
+            echo "MISSING: $NAME"
+            echo "Creating fallback..."
+
+            for DIR in \
+              mipmap-mdpi \
+              mipmap-hdpi \
+              mipmap-xhdpi \
+              mipmap-xxhdpi \
+              mipmap-xxxhdpi
+            do
+
+              mkdir -p "$RES_DIR/$DIR"
+
+              cp \
+                "$FALLBACK_DIR/fallback.png" \
+                "$RES_DIR/$DIR/$NAME.png"
+
+            done
+
+          done < /tmp/mipmap_names.txt
+
+          echo ""
+          echo "======================================"
+          echo "Final mipmap resources:"
+          echo "======================================"
+
+          find "$RES_DIR" \
+            -type f \
+            -path "*/mipmap-*/*" \
+            -print \
+            | sort
+
+
+      # =========================================================
+      # REMOVE OLD MANIFEST PACKAGE ATTRIBUTE
+      # =========================================================
+
+      - name: Clean Android Manifest
+        shell: bash
+        working-directory: ${{ env.GRADLE_DIR }}
+        run: |
+          set -e
+
+          MANIFEST="app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            exit 0
+          fi
+
+          echo "Checking manifest package attribute..."
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("app/src/main/AndroidManifest.xml")
+
+          text = path.read_text(encoding="utf-8")
+
+          # Remove package="..." from <manifest ...>
+          text = re.sub(
+              r'(<manifest\b[^>]*?)\s+package\s*=\s*"[^"]*"',
+              r'\1',
+              text,
+              count=1
+          )
+
+          path.write_text(text, encoding="utf-8")
+
+          print("Manifest cleaned.")
+          PY
+
+
+      # =========================================================
+      # SHOW PROJECT INFO
+      # =========================================================
+
+      - name: Show Android Project
+        shell: bash
+        working-directory: ${{ env.GRADLE_DIR }}
+        run: |
+          echo "======================================"
+          echo "Project directory"
+          echo "======================================"
+
+          pwd
+
+          echo ""
+          echo "Files:"
+
+          find . -maxdepth 3 -type f \
+            | sort \
+            | head -200
+
+
+      # =========================================================
+      # BUILD APK
       # =========================================================
 
       - name: Build APK
@@ -245,7 +508,12 @@ jobs:
         run: |
           set -e
 
-          echo "Building type: $BUILD_TYPE"
+          echo "======================================"
+          echo "BUILD APK"
+          echo "======================================"
+
+          echo "Build type:"
+          echo "$BUILD_TYPE"
 
           if [ "$BUILD_TYPE" = "release" ]; then
             TASK="assembleRelease"
@@ -253,12 +521,21 @@ jobs:
             TASK="assembleDebug"
           fi
 
-          echo "Gradle task: $TASK"
+          echo ""
+          echo "Gradle task:"
+          echo "$TASK"
+
+          echo ""
+          echo "Starting Gradle..."
 
           "$GRADLE_CMD" \
             "$TASK" \
             --no-daemon \
             --stacktrace
+
+          echo ""
+          echo "Gradle build finished."
+
 
       # =========================================================
       # FIND APK
@@ -269,44 +546,80 @@ jobs:
         run: |
           set -e
 
-          echo "Searching APK..."
+          echo "======================================"
+          echo "SEARCHING APK"
+          echo "======================================"
+
+          echo ""
+          echo "All APK files:"
 
           find "$GRADLE_DIR" \
             -type f \
             -name "*.apk" \
-            -print
+            -print \
+            | sort
 
-          APK="$(find "$GRADLE_DIR" \
-            -type f \
-            -name "*.apk" \
-            | grep -E '/(release|debug)/' \
-            | head -1)"
+          APK=""
 
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+
+            APK="$(
+              find "$GRADLE_DIR" \
+                -type f \
+                -path "*/build/outputs/apk/release/*.apk" \
+                | head -1
+            )"
+
+          else
+
+            APK="$(
+              find "$GRADLE_DIR" \
+                -type f \
+                -path "*/build/outputs/apk/debug/*.apk" \
+                | head -1
+            )"
+
+          fi
+
+          # Fallback
           if [ -z "$APK" ]; then
-            APK="$(find "$GRADLE_DIR" \
-              -type f \
-              -name "*.apk" \
-              | head -1)"
+
+            APK="$(
+              find "$GRADLE_DIR" \
+                -type f \
+                -name "*.apk" \
+                | head -1
+            )"
+
           fi
 
           if [ -z "$APK" ]; then
-            echo "::error::APK tidak ditemukan setelah build."
+            echo ""
+            echo "::error::APK tidak ditemukan."
             exit 1
           fi
 
+          echo ""
           echo "APK found:"
           echo "$APK"
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
-          cp "$APK" "$GITHUB_WORKSPACE/output/${{ inputs.app_name }}.apk"
+          cp \
+            "$APK" \
+            "$GITHUB_WORKSPACE/output/${{ inputs.app_name }}.apk"
+
+          echo ""
+          echo "Final APK:"
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/output/${{ inputs.app_name }}.apk"
 
           echo "APK_PATH=$GITHUB_WORKSPACE/output/${{ inputs.app_name }}.apk" >> "$GITHUB_ENV"
 
-          ls -lh "$GITHUB_WORKSPACE/output/"
 
       # =========================================================
-      # CREATE RELEASE
+      # CREATE GITHUB RELEASE
       # =========================================================
 
       - name: Create GitHub Release
@@ -315,13 +628,15 @@ jobs:
           tag_name: "build-${{ github.run_number }}"
           name: "${{ inputs.app_name }} Build ${{ github.run_number }}"
           body: |
-            ## ${{ inputs.app_name }}
+            # ${{ inputs.app_name }}
 
             Automatic Android APK build.
 
             **Build type:** ${{ inputs.build_type }}
 
-            **Run:** #${{ github.run_number }}
+            **Build number:** ${{ github.run_number }}
+
+            **Commit:** ${{ github.sha }}
 
             Built automatically by GitHub Actions.
           files: |
