@@ -27,10 +27,6 @@ on:
           - release
           - debug
 
-  push:
-    branches:
-      - main
-
 
 jobs:
   build:
@@ -46,28 +42,28 @@ jobs:
 
     steps:
 
-      # ============================================================
+      # ==========================================
       # CHECKOUT
-      # ============================================================
+      # ==========================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ============================================================
+      # ==========================================
       # JAVA
-      # ============================================================
+      # ==========================================
 
       - name: Setup Java 17
-  uses: actions/setup-java@v5
-  with:
-    distribution: temurin
-    java-version: "17"
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
 
 
-      # ============================================================
+      # ==========================================
       # ANDROID SDK
-      # ============================================================
+      # ==========================================
 
       - name: Setup Android SDK
         shell: bash
@@ -75,13 +71,13 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "ANDROID SDK"
+          echo "Android SDK Setup"
           echo "========================================="
 
           echo "ANDROID_HOME=$ANDROID_HOME"
 
           if [ ! -d "$ANDROID_HOME" ]; then
-            echo "Android SDK tidak ditemukan."
+            echo "ERROR: Android SDK tidak ditemukan."
             exit 1
           fi
 
@@ -94,16 +90,15 @@ jobs:
               2>/dev/null | head -n 1)
           fi
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager tidak ditemukan."
+          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager tidak ditemukan."
             exit 1
           fi
 
           echo "sdkmanager: $SDKMANAGER"
 
-          echo "========================================="
-          echo "ACCEPTING ANDROID LICENSES"
-          echo "========================================="
+          echo ""
+          echo "Accepting Android SDK licenses..."
 
           set +e
           yes | "$SDKMANAGER" --licenses
@@ -112,23 +107,21 @@ jobs:
 
           echo "License command exit code: $LICENSE_EXIT"
 
-          echo "========================================="
-          echo "INSTALLING ANDROID PACKAGES"
-          echo "========================================="
+          echo ""
+          echo "Installing Android packages..."
 
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-          echo "========================================="
+          echo ""
           echo "ANDROID SDK READY"
-          echo "========================================="
 
 
-      # ============================================================
-      # DOWNLOAD PROJECT ZIP
-      # ============================================================
+      # ==========================================
+      # DOWNLOAD PROJECT
+      # ==========================================
 
       - name: Download project ZIP
         shell: bash
@@ -138,13 +131,8 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "DOWNLOADING PROJECT"
+          echo "Downloading Project"
           echo "========================================="
-
-          if [ -z "$ZIP_URL" ]; then
-            echo "ZIP URL kosong."
-            exit 1
-          fi
 
           mkdir -p "$GITHUB_WORKSPACE/project"
 
@@ -152,239 +140,264 @@ jobs:
             -L \
             --fail \
             --retry 5 \
-            --retry-delay 2 \
-            --connect-timeout 30 \
-            --max-time 600 \
+            --retry-delay 3 \
             "$ZIP_URL" \
             -o "$GITHUB_WORKSPACE/project.zip"
 
-          FILE_SIZE=$(stat -c%s "$GITHUB_WORKSPACE/project.zip")
+          echo ""
+          echo "ZIP downloaded."
 
-          echo "ZIP size: $FILE_SIZE bytes"
+          ls -lh "$GITHUB_WORKSPACE/project.zip"
 
-          if [ "$FILE_SIZE" -lt 1000 ]; then
-            echo "ZIP terlalu kecil atau download gagal."
-            exit 1
-          fi
-
+          echo ""
           echo "Testing ZIP..."
 
-          unzip -t "$GITHUB_WORKSPACE/project.zip"
+          unzip -t "$GITHUB_WORKSPACE/project.zip" >/dev/null
 
+          echo "ZIP OK."
+
+          echo ""
           echo "Extracting..."
 
           unzip -q "$GITHUB_WORKSPACE/project.zip" \
             -d "$GITHUB_WORKSPACE/project"
 
-          echo "Project berhasil diekstrak."
+          echo "Extraction complete."
+
+          echo ""
+          echo "Project contents:"
+
+          find "$GITHUB_WORKSPACE/project" \
+            -maxdepth 2 \
+            -type f \
+            | head -100
 
 
-      # ============================================================
-      # FIND PROJECT ROOT
-      # ============================================================
+      # ==========================================
+      # NORMALIZE ZIP STRUCTURE
+      # ==========================================
 
-      - name: Detect project root
+      - name: Normalize project root
         shell: bash
         run: |
           set -e
 
+          PROJECT="$GITHUB_WORKSPACE/project"
+
           echo "========================================="
-          echo "DETECTING PROJECT"
+          echo "Detecting project root"
           echo "========================================="
 
-          BASE="$GITHUB_WORKSPACE/project"
+          while true; do
+            ITEMS=$(find "$PROJECT" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -printf '%f\n' \
+              | sort)
 
-          echo "Files:"
-          find "$BASE" -maxdepth 3 -type f | head -100 || true
+            COUNT=$(printf '%s\n' "$ITEMS" | sed '/^$/d' | wc -l)
 
-          PROJECT_ROOT=""
+            if [ "$COUNT" -eq 1 ]; then
+              ONLY=$(printf '%s\n' "$ITEMS" | sed '/^$/d')
 
-          # Flutter
-          PUBSPEC=$(find "$BASE" \
-            -type f \
-            -name "pubspec.yaml" \
-            -print \
-            -quit)
+              if [ -d "$PROJECT/$ONLY" ]; then
+                if [ -f "$PROJECT/$ONLY/pubspec.yaml" ] || \
+                   [ -f "$PROJECT/$ONLY/gradlew" ] || \
+                   [ -f "$PROJECT/$ONLY/settings.gradle" ] || \
+                   [ -f "$PROJECT/$ONLY/settings.gradle.kts" ]; then
 
-          if [ -n "$PUBSPEC" ]; then
-            PROJECT_ROOT=$(dirname "$PUBSPEC")
-            echo "Flutter project detected."
-          fi
+                  echo "Nested project detected: $ONLY"
 
-          # Native Android
-          if [ -z "$PROJECT_ROOT" ]; then
-            GRADLEW=$(find "$BASE" \
-              -type f \
-              -name "gradlew" \
-              -print \
-              -quit)
+                  shopt -s dotglob
+                  mv "$PROJECT/$ONLY"/* "$PROJECT"/
+                  rmdir "$PROJECT/$ONLY"
+                  shopt -u dotglob
 
-            if [ -n "$GRADLEW" ]; then
-              PROJECT_ROOT=$(dirname "$GRADLEW")
-              echo "Native Android Gradle project detected."
+                  continue
+                fi
+              fi
             fi
-          fi
 
-          if [ -z "$PROJECT_ROOT" ]; then
-            echo ""
-            echo "========================================="
-            echo "PROJECT TIDAK DITEMUKAN"
-            echo "========================================="
-            echo ""
-            echo "Project harus memiliki salah satu:"
-            echo "- pubspec.yaml"
-            echo "- gradlew"
-            echo ""
+            break
+          done
+
+          echo ""
+          echo "Final project root:"
+          find "$PROJECT" \
+            -maxdepth 2 \
+            -type f \
+            | head -100
+
+
+      # ==========================================
+      # DETECT PROJECT TYPE
+      # ==========================================
+
+      - name: Detect project type
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT="$GITHUB_WORKSPACE/project"
+
+          echo "========================================="
+          echo "Project Detection"
+          echo "========================================="
+
+          if [ -f "$PROJECT/pubspec.yaml" ]; then
+            echo "FLUTTER" > "$GITHUB_WORKSPACE/project_type"
+            echo "Detected: Flutter"
+
+          elif [ -f "$PROJECT/gradlew" ] || \
+               [ -f "$PROJECT/settings.gradle" ] || \
+               [ -f "$PROJECT/settings.gradle.kts" ] || \
+               [ -d "$PROJECT/app" ]; then
+
+            echo "NATIVE" > "$GITHUB_WORKSPACE/project_type"
+            echo "Detected: Native Android / Gradle"
+
+          else
+            echo "ERROR: Project Flutter maupun Native Android tidak terdeteksi."
             exit 1
           fi
 
-          echo ""
-          echo "PROJECT_ROOT=$PROJECT_ROOT"
 
-          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
-
-          if [ -f "$PROJECT_ROOT/pubspec.yaml" ]; then
-            echo "PROJECT_TYPE=flutter" >> "$GITHUB_ENV"
-            echo "PROJECT_TYPE=flutter"
-          else
-            echo "PROJECT_TYPE=native" >> "$GITHUB_ENV"
-            echo "PROJECT_TYPE=native"
-          fi
-
-
-      # ============================================================
-      # FLUTTER SETUP
-      # ============================================================
+      # ==========================================
+      # SETUP FLUTTER
+      # ==========================================
 
       - name: Setup Flutter
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ hashFiles('project/pubspec.yaml') != '' }}
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
 
-      # ============================================================
+      # ==========================================
       # FLUTTER DEPENDENCIES
-      # ============================================================
+      # ==========================================
 
       - name: Flutter dependencies
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ hashFiles('project/pubspec.yaml') != '' }}
+        working-directory: project
         shell: bash
-        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           set -e
 
           echo "========================================="
-          echo "FLUTTER"
+          echo "Flutter Dependencies"
           echo "========================================="
 
           flutter --version
 
-          flutter config --no-analytics
+          flutter clean
 
           flutter pub get
 
 
-      # ============================================================
-      # FIND ANDROID ROOT
-      # ============================================================
+      # ==========================================
+      # DETECT ANDROID ROOT
+      # ==========================================
 
-      - name: Detect Android directory
+      - name: Detect Android root
         shell: bash
         run: |
           set -e
 
+          PROJECT="$GITHUB_WORKSPACE/project"
+
           echo "========================================="
-          echo "ANDROID DIRECTORY"
+          echo "Android Root Detection"
           echo "========================================="
 
-          if [ -d "$PROJECT_ROOT/android/app" ]; then
+          if [ -d "$PROJECT/android/app" ]; then
+            ANDROID_ROOT="$PROJECT/android"
 
-            ANDROID_ROOT="$PROJECT_ROOT/android"
-
-          elif [ -d "$PROJECT_ROOT/app" ]; then
-
-            ANDROID_ROOT="$PROJECT_ROOT"
+          elif [ -d "$PROJECT/app" ]; then
+            ANDROID_ROOT="$PROJECT"
 
           else
-
-            FOUND_APP=$(find "$PROJECT_ROOT" \
+            ANDROID_ROOT=$(find "$PROJECT" \
               -type d \
               -name app \
               -print \
-              -quit)
+              | head -n 1 \
+              | xargs -r dirname)
 
-            if [ -n "$FOUND_APP" ]; then
-              ANDROID_ROOT=$(dirname "$FOUND_APP")
+            if [ -z "$ANDROID_ROOT" ]; then
+              echo "ERROR: Android app directory tidak ditemukan."
+              exit 1
             fi
-
           fi
 
-          if [ -z "$ANDROID_ROOT" ] || [ ! -d "$ANDROID_ROOT" ]; then
-            echo "Android root tidak ditemukan."
-            exit 1
-          fi
+          echo "ANDROID_ROOT=$ANDROID_ROOT" \
+            >> "$GITHUB_ENV"
 
-          echo "ANDROID_ROOT=$ANDROID_ROOT"
-
-          echo "ANDROID_ROOT=$ANDROID_ROOT" >> "$GITHUB_ENV"
+          echo "Android root:"
+          echo "$ANDROID_ROOT"
 
 
-      # ============================================================
+      # ==========================================
       # DETECT COMPILE SDK
-      # ============================================================
+      # ==========================================
 
       - name: Detect Android SDK version
         shell: bash
         run: |
           set -e
 
-          ANDROID_ROOT="$ANDROID_ROOT"
+          echo "========================================="
+          echo "Detect Android SDK"
+          echo "========================================="
 
-          COMPILE_SDK="35"
+          COMPILE_SDK=""
 
-          if [ -f "$ANDROID_ROOT/app/build.gradle" ]; then
+          for FILE in \
+            "$ANDROID_ROOT/build.gradle" \
+            "$ANDROID_ROOT/build.gradle.kts" \
+            "$ANDROID_ROOT/app/build.gradle" \
+            "$ANDROID_ROOT/app/build.gradle.kts"
+          do
 
-            FOUND=$(grep -rhoE \
-              'compileSdk(Value)?[[:space:]]*[=]?[[:space:]]*[0-9]+' \
-              "$ANDROID_ROOT" \
-              2>/dev/null \
-              | grep -oE '[0-9]+' \
-              | tail -1 || true)
+            if [ -f "$FILE" ]; then
 
-            if [ -n "$FOUND" ]; then
-              COMPILE_SDK="$FOUND"
+              VALUE=$(grep -E \
+                'compileSdk(Version)?[[:space:]]*[=:]?[[:space:]]*[0-9]+' \
+                "$FILE" \
+                | grep -oE '[0-9]+' \
+                | tail -n 1 || true)
+
+              if [ -n "$VALUE" ]; then
+                COMPILE_SDK="$VALUE"
+                break
+              fi
+
             fi
+          done
 
-          elif [ -f "$ANDROID_ROOT/app/build.gradle.kts" ]; then
-
-            FOUND=$(grep -rhoE \
-              'compileSdk[[:space:]]*\(?[[:space:]]*[0-9]+' \
-              "$ANDROID_ROOT" \
-              2>/dev/null \
-              | grep -oE '[0-9]+' \
-              | tail -1 || true)
-
-            if [ -n "$FOUND" ]; then
-              COMPILE_SDK="$FOUND"
-            fi
-
+          if [ -z "$COMPILE_SDK" ]; then
+            COMPILE_SDK="35"
           fi
 
-          echo "Compile SDK detected: $COMPILE_SDK"
+          echo "COMPILE_SDK=$COMPILE_SDK"
 
-          echo "COMPILE_SDK=$COMPILE_SDK" >> "$GITHUB_ENV"
+          echo "COMPILE_SDK=$COMPILE_SDK" \
+            >> "$GITHUB_ENV"
 
 
-      # ============================================================
-      # INSTALL DETECTED SDK
-      # ============================================================
+      # ==========================================
+      # INSTALL REQUIRED SDK
+      # ==========================================
 
-      - name: Install required Android SDK
+      - name: Install required Android packages
         shell: bash
         run: |
           set -e
+
+          echo "========================================="
+          echo "Installing Android packages"
+          echo "========================================="
 
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
@@ -395,128 +408,135 @@ jobs:
               2>/dev/null | head -n 1)
           fi
 
-          echo "Installing platform android-$COMPILE_SDK"
+          echo "Installing:"
+          echo "platforms;android-$COMPILE_SDK"
+          echo "build-tools;35.0.0"
 
           "$SDKMANAGER" \
-            "platforms;android-$COMPILE_SDK"
-
-          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-$COMPILE_SDK" \
             "build-tools;35.0.0"
 
+          echo "Android packages installed."
 
-      # ============================================================
+
+      # ==========================================
       # REPAIR GRADLE WRAPPER
-      # ============================================================
+      # ==========================================
 
-      - name: Repair Gradle Wrapper
-        if: env.PROJECT_TYPE == 'native'
+      - name: Repair Gradle wrapper
+        if: ${{ hashFiles('project/pubspec.yaml') == '' }}
         shell: bash
-        working-directory: ${{ env.ANDROID_ROOT }}
         run: |
           set -e
 
           echo "========================================="
-          echo "GRADLE WRAPPER"
+          echo "Gradle Wrapper Check"
           echo "========================================="
 
-          chmod +x gradlew 2>/dev/null || true
+          cd "$ANDROID_ROOT"
 
-          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew tidak ditemukan."
 
-            echo "Gradle wrapper JAR sudah ada."
+            if [ -f "settings.gradle" ] || \
+               [ -f "settings.gradle.kts" ] || \
+               [ -f "build.gradle" ] || \
+               [ -f "build.gradle.kts" ]; then
 
-          else
+              echo "Creating Gradle wrapper..."
+
+              if command -v gradle >/dev/null 2>&1; then
+                gradle wrapper
+              else
+                echo "Gradle command tidak tersedia."
+                exit 1
+              fi
+            else
+              echo "Bukan Gradle project."
+              exit 1
+            fi
+          fi
+
+          chmod +x gradlew
+
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
 
             echo "Gradle wrapper JAR tidak ditemukan."
-            echo "Mencoba memperbaiki wrapper..."
 
-            mkdir -p gradle/wrapper
-
-            GRADLE_VERSION="8.7"
-
-            if [ -f "gradle/wrapper/gradle-wrapper.properties" ]; then
-
-              DIST_URL=$(grep \
-                '^distributionUrl=' \
-                gradle/wrapper/gradle-wrapper.properties \
-                | head -1 \
-                | cut -d'=' -f2- \
-                | sed 's/\\r//g' || true)
-
-              if echo "$DIST_URL" | grep -qE 'gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-bin.zip'; then
-
-                GRADLE_VERSION=$(echo "$DIST_URL" \
-                  | sed -nE 's/.*gradle-([0-9]+\.[0-9]+(\.[0-9]+)?)-bin\.zip.*/\1/p')
-
-              fi
-
+            if [ ! -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+              echo "gradle-wrapper.properties juga tidak ditemukan."
+              exit 1
             fi
 
-            echo "Using Gradle $GRADLE_VERSION"
+            DIST_URL=$(grep \
+              '^distributionUrl=' \
+              gradle/wrapper/gradle-wrapper.properties \
+              | sed 's/^distributionUrl=//' \
+              | sed 's/\\:/\:/g')
 
-            GRADLE_ZIP="/tmp/gradle-${GRADLE_VERSION}-bin.zip"
-            GRADLE_DIR="/tmp/gradle-${GRADLE_VERSION}"
+            if [ -z "$DIST_URL" ]; then
+              echo "distributionUrl tidak ditemukan."
+              exit 1
+            fi
+
+            echo "Gradle distribution:"
+            echo "$DIST_URL"
+
+            GRADLE_ZIP="/tmp/gradle.zip"
 
             curl \
               -L \
               --fail \
               --retry 5 \
-              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+              "$DIST_URL" \
               -o "$GRADLE_ZIP"
 
-            rm -rf "$GRADLE_DIR"
+            mkdir -p /tmp/gradle-dist
 
-            unzip -q "$GRADLE_ZIP" -d /tmp
+            unzip -q \
+              "$GRADLE_ZIP" \
+              -d /tmp/gradle-dist
 
-            GRADLE_BIN="$GRADLE_DIR/bin/gradle"
+            GRADLE_BIN=$(find /tmp/gradle-dist \
+              -type f \
+              -path '*/bin/gradle' \
+              | head -n 1)
 
-            if [ ! -x "$GRADLE_BIN" ]; then
-              echo "Gradle binary tidak ditemukan:"
-              ls -la /tmp | head -50
+            if [ -z "$GRADLE_BIN" ]; then
+              echo "Gradle binary tidak ditemukan."
               exit 1
             fi
 
-            "$GRADLE_BIN" wrapper \
-              --gradle-version "$GRADLE_VERSION" \
-              --distribution-type bin
-
-            chmod +x gradlew
+            "$GRADLE_BIN" wrapper
 
           fi
 
-          echo "Testing Gradle..."
+          echo ""
+          echo "Testing Gradle wrapper..."
 
           ./gradlew --version
 
 
-      # ============================================================
-      # REPAIR MISSING MIPMAP RESOURCES
-      # ============================================================
+      # ==========================================
+      # FIX MANIFEST
+      # ==========================================
 
-      - name: Repair missing Android resources
-        if: env.PROJECT_TYPE == 'native'
+      - name: Fix Android manifest
         shell: bash
-        working-directory: ${{ env.ANDROID_ROOT }}
         run: |
           set -e
 
-          echo "========================================="
-          echo "REPAIRING MISSING MIPMAP RESOURCES"
-          echo "========================================="
-
-          RES="$ANDROID_ROOT/app/src/main/res"
           MANIFEST="$ANDROID_ROOT/app/src/main/AndroidManifest.xml"
 
           if [ ! -f "$MANIFEST" ]; then
-            echo "AndroidManifest.xml tidak ditemukan."
+            echo "Manifest tidak ditemukan."
             exit 0
           fi
 
-          mkdir -p "$RES"
-
-          # --------------------------------------------------------
-          # Remove obsolete package attribute
-          # --------------------------------------------------------
+          echo "========================================="
+          echo "Fix Android Manifest"
+          echo "========================================="
 
           python3 - "$MANIFEST" <<'PY'
           import re
@@ -527,33 +547,53 @@ jobs:
           with open(path, "r", encoding="utf-8") as f:
               data = f.read()
 
-          new_data = re.sub(
+          data = re.sub(
               r'\s+package\s*=\s*"[^"]*"',
               '',
               data,
               count=1
           )
 
-          if new_data != data:
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(new_data)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(data)
 
-              print("Removed obsolete package attribute.")
-          else:
-              print("No package attribute changed.")
+          print("Manifest package attribute fixed.")
           PY
 
-          # --------------------------------------------------------
-          # Find mipmap references
-          # --------------------------------------------------------
+
+      # ==========================================
+      # REPAIR MISSING MIPMAP RESOURCES
+      # ==========================================
+
+      - name: Repair missing mipmap resources
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="$ANDROID_ROOT/app/src/main/AndroidManifest.xml"
+          RES="$ANDROID_ROOT/app/src/main/res"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "Manifest tidak ditemukan."
+            exit 0
+          fi
+
+          echo "========================================="
+          echo "Repairing missing mipmap resources"
+          echo "========================================="
+
+          mkdir -p \
+            "$RES/mipmap-mdpi" \
+            "$RES/mipmap-hdpi" \
+            "$RES/mipmap-xhdpi" \
+            "$RES/mipmap-xxhdpi" \
+            "$RES/mipmap-xxxhdpi"
 
           python3 - "$MANIFEST" "$RES" <<'PY'
-          import re
-          import sys
           import os
+          import re
           import shutil
-          import struct
-          import zlib
+          import sys
 
           manifest = sys.argv[1]
           res = sys.argv[2]
@@ -561,426 +601,305 @@ jobs:
           with open(manifest, "r", encoding="utf-8") as f:
               data = f.read()
 
-          names = sorted(set(
-              re.findall(r'@mipmap/([A-Za-z0-9_]+)', data)
-          ))
+          names = sorted(
+              set(
+                  re.findall(
+                      r'@mipmap/([A-Za-z0-9_]+)',
+                      data
+                  )
+              )
+          )
 
           print("Manifest mipmap references:")
           print(names)
 
-          if not names:
-              print("No mipmap references.")
-              raise SystemExit(0)
-
-          # --------------------------------------------------------
-          # Find existing image
-          # --------------------------------------------------------
-
-          existing = None
+          existing = []
 
           for root, dirs, files in os.walk(res):
-
-              for filename in files:
-
-                  lower = filename.lower()
-
-                  if lower.endswith((
-                      ".png",
-                      ".jpg",
-                      ".jpeg",
-                      ".webp"
-                  )):
-
-                      existing = os.path.join(root, filename)
-                      break
-
-              if existing:
-                  break
-
-          print("Existing image:", existing)
-
-          # --------------------------------------------------------
-          # Generate simple fallback PNG
-          # --------------------------------------------------------
-
-          fallback = "/tmp/android_fallback_icon.png"
-
-          def png_chunk(chunk_type, data):
-              raw = chunk_type + data
-              return (
-                  struct.pack(">I", len(data))
-                  + raw
-                  + struct.pack(">I", zlib.crc32(raw) & 0xffffffff)
-              )
-
-          width = 192
-          height = 192
-
-          rows = []
-
-          for y in range(height):
-
-              row = bytearray([0])
-
-              for x in range(width):
-
-                  # simple dark background + white center
-                  if (
-                      x < 20 or
-                      x >= width - 20 or
-                      y < 20 or
-                      y >= height - 20
+              for file in files:
+                  if file.lower().endswith(
+                      (".png", ".jpg", ".jpeg", ".webp")
                   ):
-                      pixel = (25, 25, 25, 255)
-                  else:
-                      pixel = (80, 80, 80, 255)
+                      existing.append(
+                          os.path.join(root, file)
+                      )
 
-                  row.extend(pixel)
+          print("Existing image resources:")
+          print(existing[:20])
 
-              rows.append(bytes(row))
+          fallback = existing[0] if existing else None
 
-          raw_data = b"".join(rows)
-
-          png = b"\x89PNG\r\n\x1a\n"
-
-          png += png_chunk(
-              b"IHDR",
-              struct.pack(
-                  ">IIBBBBB",
-                  width,
-                  height,
-                  8,
-                  6,
-                  0,
-                  0,
-                  0
-              )
-          )
-
-          png += png_chunk(
-              b"IDAT",
-              zlib.compress(raw_data, 9)
-          )
-
-          png += png_chunk(b"IEND", b"")
-
-          with open(fallback, "wb") as f:
-              f.write(png)
-
-          # --------------------------------------------------------
-          # Density directories
-          # --------------------------------------------------------
-
-          densities = [
-              "mipmap-mdpi",
-              "mipmap-hdpi",
-              "mipmap-xhdpi",
-              "mipmap-xxhdpi",
-              "mipmap-xxxhdpi"
-          ]
+          if fallback:
+              print("Using fallback image:")
+              print(fallback)
 
           for name in names:
 
-              found = False
+              already_exists = False
 
-              for density in densities:
+              for root, dirs, files in os.walk(res):
 
-                  target_dir = os.path.join(res, density)
-                  target = os.path.join(target_dir, name + ".png")
+                  if not root.split(os.sep)[-1].startswith("mipmap-"):
+                      continue
 
-                  os.makedirs(target_dir, exist_ok=True)
+                  for file in files:
 
-                  # Check whether resource already exists
-                  possible = [
-                      os.path.join(target_dir, name + ".png"),
-                      os.path.join(target_dir, name + ".webp"),
-                      os.path.join(target_dir, name + ".jpg"),
-                      os.path.join(target_dir, name + ".jpeg"),
-                  ]
+                      base = os.path.splitext(file)[0]
 
-                  if any(os.path.exists(x) for x in possible):
-                      found = True
+                      if base == name:
+                          already_exists = True
+                          break
+
+                  if already_exists:
                       break
 
-              if found:
-                  print("Resource already exists:", name)
+              if already_exists:
                   continue
 
-              print("Creating missing resource:", name)
+              print(
+                  "Missing mipmap:",
+                  name
+              )
 
-              for density in densities:
+              if fallback:
 
-                  target_dir = os.path.join(res, density)
-                  os.makedirs(target_dir, exist_ok=True)
+                  for density in [
+                      "mipmap-mdpi",
+                      "mipmap-hdpi",
+                      "mipmap-xhdpi",
+                      "mipmap-xxhdpi",
+                      "mipmap-xxxhdpi"
+                  ]:
 
-                  target = os.path.join(
-                      target_dir,
-                      name + ".png"
+                      target = os.path.join(
+                          res,
+                          density,
+                          name + ".png"
+                      )
+
+                      shutil.copyfile(
+                          fallback,
+                          target
+                      )
+
+                      print(
+                          "Created:",
+                          target
+                      )
+
+              else:
+                  print(
+                      "WARNING: no image fallback found for",
+                      name
                   )
-
-                  if existing:
-                      shutil.copy2(existing, target)
-                  else:
-                      shutil.copy2(fallback, target)
-
-          print("Mipmap repair finished.")
           PY
 
-          echo "========================================="
-          echo "RESOURCE REPAIR COMPLETE"
-          echo "========================================="
 
-
-      # ============================================================
-      # FLUTTER BUILD
-      # ============================================================
+      # ==========================================
+      # BUILD FLUTTER
+      # ==========================================
 
       - name: Build Flutter APK
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ hashFiles('project/pubspec.yaml') != '' }}
+        working-directory: project
         shell: bash
-        working-directory: ${{ env.PROJECT_ROOT }}
         env:
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -e
 
           echo "========================================="
-          echo "FLUTTER APK BUILD"
+          echo "Flutter APK Build"
           echo "========================================="
 
-          flutter clean
-
-          flutter pub get
-
           if [ "$BUILD_TYPE" = "debug" ]; then
-
-            flutter build apk \
-              --debug
-
+            flutter build apk --debug
           else
-
-            flutter build apk \
-              --release
-
+            flutter build apk --release
           fi
 
 
-      # ============================================================
-      # NATIVE ANDROID BUILD
-      # ============================================================
+      # ==========================================
+      # BUILD NATIVE ANDROID
+      # ==========================================
 
       - name: Build Native Android APK
-        if: env.PROJECT_TYPE == 'native'
+        if: ${{ hashFiles('project/pubspec.yaml') == '' }}
         shell: bash
-        working-directory: ${{ env.ANDROID_ROOT }}
         env:
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -e
 
           echo "========================================="
-          echo "NATIVE ANDROID APK BUILD"
+          echo "Native Android APK Build"
           echo "========================================="
+
+          cd "$ANDROID_ROOT"
 
           chmod +x gradlew
 
-          echo "Gradle:"
-          ./gradlew --version
-
-          echo "Build type: $BUILD_TYPE"
-
           if [ "$BUILD_TYPE" = "debug" ]; then
-
-            ./gradlew \
-              --no-daemon \
-              --stacktrace \
-              --no-build-cache \
-              assembleDebug
-
+            ./gradlew assembleDebug --stacktrace
           else
-
-            ./gradlew \
-              --no-daemon \
-              --stacktrace \
-              --no-build-cache \
-              assembleRelease
-
+            ./gradlew assembleRelease --stacktrace
           fi
 
 
-      # ============================================================
+      # ==========================================
       # FIND APK
-      # ============================================================
+      # ==========================================
 
       - name: Find APK
         shell: bash
         env:
-          APP_NAME: ${{ inputs.app_name || 'app' }}
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+          APP_NAME: ${{ inputs.app_name }}
         run: |
           set -e
 
           echo "========================================="
-          echo "SEARCHING APK"
+          echo "Finding APK"
           echo "========================================="
-
-          if [ "$BUILD_TYPE" = "debug" ]; then
-            APK=$(find "$PROJECT_ROOT" \
-              -type f \
-              -path "*/build/outputs/apk/*" \
-              -name "*debug*.apk" \
-              | head -1 || true)
-          else
-            APK=$(find "$PROJECT_ROOT" \
-              -type f \
-              -path "*/build/outputs/apk/*" \
-              -name "*release*.apk" \
-              | head -1 || true)
-          fi
-
-          if [ -z "$APK" ]; then
-
-            echo "APK berdasarkan build type tidak ditemukan."
-
-            echo ""
-            echo "Mencari semua APK..."
-
-            find "$PROJECT_ROOT" \
-              -type f \
-              -name "*.apk" \
-              -print || true
-
-            APK=$(find "$PROJECT_ROOT" \
-              -type f \
-              -name "*.apk" \
-              | head -1 || true)
-
-          fi
-
-          if [ -z "$APK" ]; then
-            echo "APK TIDAK DITEMUKAN."
-            exit 1
-          fi
-
-          echo ""
-          echo "APK ditemukan:"
-          echo "$APK"
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
-          FINAL_APK="$GITHUB_WORKSPACE/output/${APP_NAME}.apk"
+          APK=""
 
-          cp "$APK" "$FINAL_APK"
+          if [ -d "$GITHUB_WORKSPACE/project/build/app/outputs/apk" ]; then
 
-          echo "FINAL_APK=$FINAL_APK" >> "$GITHUB_ENV"
+            APK=$(find \
+              "$GITHUB_WORKSPACE/project/build/app/outputs/apk" \
+              -type f \
+              -name "*.apk" \
+              | head -n 1)
+
+          fi
+
+          if [ -z "$APK" ] && [ -d "$ANDROID_ROOT/app/build/outputs/apk" ]; then
+
+            APK=$(find \
+              "$ANDROID_ROOT/app/build/outputs/apk" \
+              -type f \
+              -name "*.apk" \
+              | sort \
+              | tail -n 1)
+
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK tidak ditemukan."
+
+            echo ""
+            echo "Searching all APK files..."
+
+            find "$GITHUB_WORKSPACE/project" \
+              -type f \
+              -name "*.apk" \
+              -print
+
+            exit 1
+          fi
+
+          echo "APK ditemukan:"
+          echo "$APK"
+
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/output/${APP_NAME}.apk"
 
           echo ""
-          echo "Final APK:"
-          ls -lh "$FINAL_APK"
+          echo "Output:"
+          ls -lh "$GITHUB_WORKSPACE/output/${APP_NAME}.apk"
 
 
-      # ============================================================
+      # ==========================================
       # CREATE GITHUB RELEASE
-      # ============================================================
+      # ==========================================
 
       - name: Create GitHub Release
-        if: success()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_NAME: ${{ inputs.app_name || 'app' }}
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+          APP_NAME: ${{ inputs.app_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -e
 
           echo "========================================="
-          echo "GITHUB RELEASE"
+          echo "Creating GitHub Release"
           echo "========================================="
 
-          VERSION="build-${GITHUB_RUN_NUMBER}"
+          TAG="build-${GITHUB_RUN_NUMBER}"
 
-          echo "Release: $VERSION"
-
-          gh release create "$VERSION" \
-            "$FINAL_APK" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$APP_NAME $VERSION" \
-            --notes "Automatic APK build
-
-          App: $APP_NAME
-          Build type: $BUILD_TYPE
-          Run: #$GITHUB_RUN_NUMBER
-          Commit: $GITHUB_SHA"
+          gh release create "$TAG" \
+            "$GITHUB_WORKSPACE/output/${APP_NAME}.apk" \
+            --title "${APP_NAME} ${BUILD_TYPE} #${GITHUB_RUN_NUMBER}" \
+            --notes "Automated APK build."
 
 
-      # ============================================================
-      # SEND TO TELEGRAM
-      # ============================================================
+      # ==========================================
+      # SEND TELEGRAM
+      # ==========================================
 
       - name: Send APK to Telegram
-        if: success()
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_USER_ID: ${{ inputs.user_id }}
-          APP_NAME: ${{ inputs.app_name || 'app' }}
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+          APP_NAME: ${{ inputs.app_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -e
 
           echo "========================================="
-          echo "TELEGRAM"
+          echo "Sending APK to Telegram"
           echo "========================================="
 
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-            echo "TELEGRAM_BOT_TOKEN belum diset."
+            echo "ERROR: TELEGRAM_BOT_TOKEN belum diset."
             exit 1
           fi
 
           if [ -z "$TELEGRAM_USER_ID" ]; then
-            echo "Telegram User ID kosong."
+            echo "ERROR: Telegram User ID kosong."
             exit 1
           fi
 
-          CAPTION="✅ APK berhasil dibuat
+          APK="$GITHUB_WORKSPACE/output/${APP_NAME}.apk"
 
-          📱 App: $APP_NAME
-          🔧 Type: $BUILD_TYPE
-          🏗 Build: #$GITHUB_RUN_NUMBER
-          📦 Repository: $GITHUB_REPOSITORY"
+          CAPTION="✅ Build berhasil
 
-          RESPONSE=$(curl \
-            -sS \
+📱 App: ${APP_NAME}
+🔧 Type: ${BUILD_TYPE}
+🔢 Build: #${GITHUB_RUN_NUMBER}"
+
+          curl \
             --fail \
+            --retry 3 \
             -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
             -F "chat_id=${TELEGRAM_USER_ID}" \
-            -F "document=@${FINAL_APK}" \
-            -F "caption=${CAPTION}")
+            -F "document=@${APK}" \
+            -F "caption=${CAPTION}"
 
-          echo "$RESPONSE"
-
-
-      # ============================================================
-      # SUMMARY
-      # ============================================================
-
-      - name: Build Summary
-        if: always()
-        shell: bash
-        env:
-          APP_NAME: ${{ inputs.app_name || 'app' }}
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
-        run: |
           echo ""
+          echo "APK berhasil dikirim ke Telegram."
+
+
+      # ==========================================
+      # SUMMARY
+      # ==========================================
+
+      - name: Build summary
+        if: always()
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
           echo "========================================="
           echo "BUILD SUMMARY"
           echo "========================================="
-          echo "App        : $APP_NAME"
-          echo "Build type : $BUILD_TYPE"
-          echo "Project    : $PROJECT_TYPE"
-          echo "Root       : $PROJECT_ROOT"
-          echo "Android    : $ANDROID_ROOT"
-          echo "SDK        : $COMPILE_SDK"
-          echo "Run        : #$GITHUB_RUN_NUMBER"
+          echo "App      : $APP_NAME"
+          echo "Build    : $BUILD_TYPE"
+          echo "Run      : #$GITHUB_RUN_NUMBER"
+          echo "Status   : ${{ job.status }}"
           echo "========================================="
