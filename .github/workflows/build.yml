@@ -70,7 +70,7 @@ jobs:
           test -s downloaded.zip
 
           echo ""
-          echo "Downloaded ZIP:"
+          echo "ZIP:"
           ls -lh downloaded.zip
 
           echo ""
@@ -78,7 +78,7 @@ jobs:
 
           unzip -t downloaded.zip >/dev/null
 
-          echo "ZIP is valid."
+          echo "ZIP OK."
 
           echo ""
           echo "Extracting..."
@@ -103,7 +103,7 @@ jobs:
 
 
       # =========================================
-      # ANDROID SDK
+      # ANDROID SDK ENVIRONMENT
       # =========================================
 
       - name: Setup Android SDK Environment
@@ -119,12 +119,10 @@ jobs:
 
           if [ ! -d "$SDK" ]; then
             echo "ERROR: Android SDK not found."
-            echo "Checked:"
-            echo "$SDK"
             exit 1
           fi
 
-          echo "Android SDK:"
+          echo "SDK:"
           echo "$SDK"
 
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
@@ -133,47 +131,45 @@ jobs:
           echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
           if [ -d "$SDK/cmdline-tools/latest/bin" ]; then
-
             echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
           elif [ -d "$SDK/cmdline-tools/16.0/bin" ]; then
-
             echo "$SDK/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
 
           else
-
-            echo "ERROR: Android command line tools not found."
-
-            find "$SDK/cmdline-tools" \
-              -maxdepth 3 \
-              -type f \
-              2>/dev/null \
-              | head -100 || true
-
+            echo "ERROR: sdkmanager not found."
             exit 1
-
           fi
 
 
       # =========================================
-      # ANDROID LICENSES
+      # ACCEPT LICENSES
       # =========================================
 
       - name: Accept Android SDK Licenses
         shell: bash
         run: |
-          set -e
+          set +e
 
           echo "========================================="
-          echo "Android SDK licenses"
+          echo "Accepting Android SDK licenses"
           echo "========================================="
 
           yes | sdkmanager \
             --sdk_root="$ANDROID_HOME" \
             --licenses \
-            >/dev/null 2>&1 || true
+            >/dev/null 2>&1
 
-          echo "Licenses processed."
+          EXIT_CODE=$?
+
+          # sdkmanager/yes dapat menghasilkan Broken pipe
+          # setelah semua license selesai.
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "License command returned $EXIT_CODE."
+            echo "Continuing because this can be caused by broken pipe."
+          fi
+
+          echo "License step completed."
 
 
       # =========================================
@@ -239,24 +235,19 @@ jobs:
             PROJECT_ROOT=$(dirname "$FLUTTER_FILE")
             PROJECT_TYPE="flutter"
 
-            echo ""
-            echo "Detected Flutter project."
+            echo "Flutter project detected."
 
           elif [ -n "$GRADLE_FILE" ]; then
 
             PROJECT_ROOT=$(dirname "$GRADLE_FILE")
             PROJECT_TYPE="gradle"
 
-            echo ""
-            echo "Detected Native Android Gradle project."
+            echo "Native Android Gradle project detected."
 
           else
 
-            echo ""
-            echo "ERROR: Could not detect project type."
-            echo ""
+            echo "ERROR: Project type could not be detected."
 
-            echo "Project structure:"
             find project \
               -maxdepth 7 \
               -type f \
@@ -288,13 +279,10 @@ jobs:
           echo "Project structure"
           echo "========================================="
 
-          echo ""
-          echo "Project root:"
+          echo "Root:"
           echo "$PROJECT_ROOT"
 
           echo ""
-          echo "Files:"
-
           find "$PROJECT_ROOT" \
             -maxdepth 5 \
             -type f \
@@ -304,9 +292,6 @@ jobs:
 
       # =========================================
       # DETECT ANDROID REQUIREMENTS
-      #
-      # Mencoba membaca compileSdk,
-      # buildToolsVersion dan ndkVersion.
       # =========================================
 
       - name: Detect Android SDK Requirements
@@ -317,14 +302,14 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Detecting Android SDK requirements"
+          echo "Detecting Android requirements"
           echo "========================================="
 
           COMPILE_SDK=""
           BUILD_TOOLS=""
           NDK_VERSION=""
 
-          SEARCH_FILES=$(find . \
+          FILES=$(find . \
             -type f \
             \( \
               -name "build.gradle" \
@@ -333,11 +318,7 @@ jobs:
             \) \
             -print)
 
-          echo ""
-          echo "Gradle configuration files:"
-          echo "$SEARCH_FILES"
-
-          for FILE in $SEARCH_FILES; do
+          for FILE in $FILES; do
 
             if [ -z "$COMPILE_SDK" ]; then
               COMPILE_SDK=$(grep -Eo \
@@ -366,7 +347,6 @@ jobs:
           done
 
           echo ""
-          echo "Detected:"
           echo "COMPILE_SDK=$COMPILE_SDK"
           echo "BUILD_TOOLS=$BUILD_TOOLS"
           echo "NDK_VERSION=$NDK_VERSION"
@@ -377,7 +357,7 @@ jobs:
 
 
       # =========================================
-      # INSTALL REQUIRED ANDROID PACKAGES
+      # INSTALL ANDROID PACKAGES
       # =========================================
 
       - name: Install Required Android Packages
@@ -387,39 +367,44 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Installing required Android packages"
+          echo "Installing Android packages"
           echo "========================================="
 
-          PACKAGES=""
-
           if [ -n "$COMPILE_SDK" ]; then
-            PACKAGES="$PACKAGES platforms;android-$COMPILE_SDK"
+
+            echo ""
+            echo "Installing platform Android $COMPILE_SDK..."
+
+            sdkmanager \
+              --sdk_root="$ANDROID_HOME" \
+              "platforms;android-$COMPILE_SDK"
+
           fi
 
           if [ -n "$BUILD_TOOLS" ]; then
-            PACKAGES="$PACKAGES build-tools;$BUILD_TOOLS"
+
+            echo ""
+            echo "Installing build-tools $BUILD_TOOLS..."
+
+            sdkmanager \
+              --sdk_root="$ANDROID_HOME" \
+              "build-tools;$BUILD_TOOLS"
+
           fi
 
           if [ -n "$NDK_VERSION" ]; then
-            PACKAGES="$PACKAGES ndk;$NDK_VERSION"
-          fi
 
-          if [ -z "$PACKAGES" ]; then
-            echo "No explicit Android SDK requirements detected."
-            echo "Using SDK packages already available on runner."
-            exit 0
+            echo ""
+            echo "Installing NDK $NDK_VERSION..."
+
+            sdkmanager \
+              --sdk_root="$ANDROID_HOME" \
+              "ndk;$NDK_VERSION"
+
           fi
 
           echo ""
-          echo "Packages:"
-          echo "$PACKAGES"
-
-          yes | sdkmanager \
-            --sdk_root="$ANDROID_HOME" \
-            $PACKAGES
-
-          echo ""
-          echo "Required Android packages installed."
+          echo "Android packages ready."
 
 
       # =========================================
@@ -449,8 +434,6 @@ jobs:
           echo "Flutter APK build"
           echo "========================================="
 
-          echo ""
-          echo "Flutter:"
           flutter --version
 
           echo ""
@@ -462,21 +445,17 @@ jobs:
           flutter pub get
 
           echo ""
-          echo "Building APK..."
+          echo "Building..."
 
           if [ "${{ inputs.build_type }}" = "release" ]; then
-
             flutter build apk --release
-
           else
-
             flutter build apk --debug
-
           fi
 
 
       # =========================================
-      # GRADLE WRAPPER REPAIR
+      # GRADLE WRAPPER
       # =========================================
 
       - name: Prepare Native Android Project
@@ -487,7 +466,7 @@ jobs:
           set -e
 
           echo "========================================="
-          echo "Preparing Native Android project"
+          echo "Preparing Gradle"
           echo "========================================="
 
           chmod +x gradlew
@@ -496,31 +475,23 @@ jobs:
           WRAPPER_JAR="$WRAPPER_DIR/gradle-wrapper.jar"
           WRAPPER_PROPERTIES="$WRAPPER_DIR/gradle-wrapper.properties"
 
-          echo ""
-          echo "Checking Gradle Wrapper..."
-
           if [ -f "$WRAPPER_JAR" ]; then
 
-            echo "Gradle Wrapper JAR found."
+            echo "Gradle Wrapper JAR exists."
 
           else
 
-            echo ""
             echo "Gradle Wrapper JAR is missing."
-            echo "Repairing..."
+            echo "Attempting repair..."
 
             if [ ! -f "$WRAPPER_PROPERTIES" ]; then
 
-              echo ""
               echo "ERROR: gradle-wrapper.properties is missing."
 
-              echo ""
-              echo "Gradle-related files:"
               find . \
                 -type f \
                 \( \
-                  -name "gradle-wrapper.properties" \
-                  -o -name "build.gradle" \
+                  -name "build.gradle" \
                   -o -name "build.gradle.kts" \
                   -o -name "settings.gradle" \
                   -o -name "settings.gradle.kts" \
@@ -532,33 +503,21 @@ jobs:
 
             fi
 
-            echo ""
-            echo "Wrapper properties:"
-            cat "$WRAPPER_PROPERTIES"
-
             DISTRIBUTION_URL=$(grep '^distributionUrl=' \
               "$WRAPPER_PROPERTIES" \
               | sed 's/^distributionUrl=//' \
               | sed 's/\\:/:/g')
 
             if [ -z "$DISTRIBUTION_URL" ]; then
-
-              echo ""
-              echo "ERROR: distributionUrl not found."
-
+              echo "ERROR: distributionUrl missing."
               exit 1
-
             fi
 
             echo ""
             echo "Gradle distribution:"
             echo "$DISTRIBUTION_URL"
 
-            echo ""
-            echo "Downloading Gradle distribution..."
-
             rm -rf /tmp/gradle-repair
-
             mkdir -p /tmp/gradle-repair
 
             curl \
@@ -571,23 +530,11 @@ jobs:
 
             test -s /tmp/gradle-repair/gradle.zip
 
-            echo ""
-            echo "Testing Gradle archive..."
-
-            unzip -t \
-              /tmp/gradle-repair/gradle.zip \
-              >/dev/null
-
-            echo ""
-            echo "Extracting Gradle..."
-
-            mkdir -p /tmp/gradle-repair/extracted
-
             unzip -q \
               /tmp/gradle-repair/gradle.zip \
-              -d /tmp/gradle-repair/extracted
+              -d /tmp/gradle-repair
 
-            GRADLE_HOME=$(find /tmp/gradle-repair/extracted \
+            GRADLE_HOME=$(find /tmp/gradle-repair \
               -mindepth 1 \
               -maxdepth 1 \
               -type d \
@@ -596,53 +543,27 @@ jobs:
               | head -1)
 
             if [ -z "$GRADLE_HOME" ]; then
-
-              echo ""
-              echo "ERROR: Gradle directory was not found."
-
-              find /tmp/gradle-repair/extracted \
-                -maxdepth 2 \
-                -type f \
-                | head -100
-
+              echo "ERROR: Gradle distribution not found."
               exit 1
-
             fi
-
-            echo ""
-            echo "Gradle home:"
-            echo "$GRADLE_HOME"
 
             export PATH="$GRADLE_HOME/bin:$PATH"
 
             echo ""
-            echo "Gradle version:"
+            echo "Gradle:"
             gradle --version
 
             echo ""
-            echo "Generating Gradle Wrapper..."
+            echo "Generating wrapper..."
 
             gradle wrapper
 
             if [ ! -f "$WRAPPER_JAR" ]; then
-
-              echo ""
-              echo "ERROR: Gradle Wrapper JAR was not generated."
-
-              echo ""
-              echo "Wrapper directory:"
-              find "$WRAPPER_DIR" \
-                -maxdepth 2 \
-                -type f \
-                -print \
-                || true
-
+              echo "ERROR: Wrapper JAR could not be generated."
               exit 1
-
             fi
 
-            echo ""
-            echo "Gradle Wrapper successfully repaired."
+            echo "Wrapper repaired."
 
           fi
 
@@ -660,7 +581,7 @@ jobs:
 
 
       # =========================================
-      # NATIVE GRADLE BUILD
+      # BUILD NATIVE
       # =========================================
 
       - name: Build Native Android APK
@@ -677,19 +598,13 @@ jobs:
           chmod +x gradlew
 
           if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "ERROR: gradle-wrapper.jar is missing."
+            echo "ERROR: gradle-wrapper.jar missing."
             exit 1
           fi
 
-          echo ""
-          echo "Gradle:"
           ./gradlew --version
 
-          echo ""
-
           if [ "${{ inputs.build_type }}" = "release" ]; then
-
-            echo "Building RELEASE..."
 
             ./gradlew \
               --no-daemon \
@@ -698,8 +613,6 @@ jobs:
               assembleRelease
 
           else
-
-            echo "Building DEBUG..."
 
             ./gradlew \
               --no-daemon \
@@ -747,22 +660,11 @@ jobs:
 
           if [ -z "$APK" ]; then
 
-            echo ""
-            echo "ERROR: APK was not found."
+            echo "ERROR: APK not found."
 
-            echo ""
-            echo "All APK files:"
             find . \
               -type f \
               -name "*.apk" \
-              -print \
-              || true
-
-            echo ""
-            echo "Build output directories:"
-            find "$PROJECT_ROOT" \
-              -type d \
-              -path "*/build/outputs*" \
               -print \
               || true
 
@@ -771,7 +673,7 @@ jobs:
           fi
 
           echo ""
-          echo "APK FOUND:"
+          echo "APK:"
           echo "$APK"
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
@@ -790,9 +692,7 @@ jobs:
             | tr '[:upper:]' '[:lower:]' \
             | sed 's/[^a-z0-9._-]/-/g')
 
-          if [ -z "$SAFE_NAME" ]; then
-            SAFE_NAME="app"
-          fi
+          [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
 
           OUTPUT_NAME="build-${SAFE_NAME}-${{ inputs.build_type }}.apk"
 
@@ -802,8 +702,6 @@ jobs:
 
           echo "OUTPUT_APK=$OUTPUT_NAME" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "Final APK:"
           ls -lh "$OUTPUT_NAME"
 
 
@@ -866,8 +764,6 @@ jobs:
           Download:
           ${RELEASE_URL}"
 
-          echo "Sending APK to Telegram..."
-
           RESPONSE=$(curl \
             -sS \
             -X POST \
@@ -879,12 +775,10 @@ jobs:
           echo "$RESPONSE"
 
           if ! echo "$RESPONSE" | grep -q '"ok":true'; then
-            echo ""
             echo "ERROR: Telegram API rejected the request."
             exit 1
           fi
 
-          echo ""
           echo "Telegram upload successful."
 
 
