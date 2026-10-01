@@ -10,27 +10,293 @@ on:
         default: "https://example.com"
 
       app_name:
-        description: "Nama APK"
+        description: "Nama Aplikasi"
         required: true
         type: string
         default: "TamzWeb"
 
+      package_name:
+        description: "Package Name"
+        required: true
+        type: string
+        default: "com.tamzdev.webapk"
+
 jobs:
-  test:
+  build-apk:
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check Inputs
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Create Android Project
+        shell: bash
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          WEB_URL: ${{ inputs.url }}
         run: |
+          set -e
+
+          echo "Creating Android project..."
+
+          mkdir -p app/src/main/java/com/tamzdev/webapk
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "WebToAPK"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          def webUrl = project.findProperty("WEB_URL") ?: "https://example.com"
+
+          webUrl = webUrl
+              .replace("\\", "\\\\")
+              .replace("\"", "\\\"")
+
+          android {
+              namespace "com.tamzdev.webapk"
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId project.findProperty("PACKAGE_NAME") ?: "com.tamzdev.webapk"
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildFeatures {
+                  buildConfig true
+              }
+          }
+
+          dependencies {
+              implementation "androidx.appcompat:appcompat:1.7.0"
+              implementation "androidx.webkit:webkit:1.12.1"
+          }
+
+          android {
+              buildTypes {
+                  debug {
+                      buildConfigField "String", "WEB_URL", "\"${webUrl}\""
+                      resValue "string", "app_name", "\"${project.findProperty("APP_NAME") ?: "Web APK"}\""
+                  }
+
+                  release {
+                      buildConfigField "String", "WEB_URL", "\"${webUrl}\""
+                      resValue "string", "app_name", "\"${project.findProperty("APP_NAME") ?: "Web APK"}\""
+                      minifyEnabled false
+                  }
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:allowBackup="true"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@style/AppTheme"
+                  android:label="@string/app_name">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          mkdir -p app/src/main/res/values
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:colorAccent">#7C3AED</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:windowLightStatusBar">false</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          cat > app/src/main/java/com/tamzdev/webapk/MainActivity.java <<'EOF'
+          package com.tamzdev.webapk;
+
+          import android.annotation.SuppressLint;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.view.View;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private WebView webView;
+
+              @SuppressLint("SetJavaScriptEnabled")
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  webView = new WebView(this);
+
+                  WebSettings settings = webView.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setJavaScriptCanOpenWindowsAutomatically(true);
+                  settings.setSupportMultipleWindows(true);
+                  settings.setBuiltInZoomControls(false);
+                  settings.setDisplayZoomControls(false);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+
+                  webView.setWebChromeClient(new WebChromeClient());
+
+                  webView.setWebViewClient(new WebViewClient() {
+
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                              WebView view,
+                              WebResourceRequest request) {
+
+                          view.loadUrl(request.getUrl().toString());
+                          return true;
+                      }
+                  });
+
+                  setContentView(webView);
+
+                  webView.loadUrl(BuildConfig.WEB_URL);
+              }
+
+              @Override
+              public void onBackPressed() {
+
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+          echo "Project created."
+
+      - name: Build APK
+        env:
+          WEB_URL: ${{ inputs.url }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          set -e
+
           echo "================================"
-          echo "WEB TO APK TEST"
+          echo "WEB TO APK"
           echo "================================"
-          echo "App Name : ${{ inputs.app_name }}"
-          echo "URL      : ${{ inputs.url }}"
+          echo "App      : $APP_NAME"
+          echo "URL      : $WEB_URL"
+          echo "Package  : $PACKAGE_NAME"
           echo "================================"
 
-      - name: Success
-        run: echo "Workflow berhasil dijalankan!"
+          gradle \
+            -PWEB_URL="$WEB_URL" \
+            -PPACKAGE_NAME="$PACKAGE_NAME" \
+            -PAPP_NAME="$APP_NAME" \
+            assembleDebug \
+            --stacktrace
+
+      - name: Rename APK
+        shell: bash
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          set -e
+
+          mkdir -p output
+
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "output/${APP_NAME}-debug.apk"
+
+          ls -lh output/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-to-apk
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build Complete
+        run: |
+          echo "================================"
+          echo "BUILD BERHASIL!"
+          echo "APK tersedia di Artifacts."
+          echo "================================"
