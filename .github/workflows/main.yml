@@ -73,17 +73,12 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
-            echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          fi
-
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          SDKMANAGER=""
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          else
+          if [ ! -f "$SDKMANAGER" ]; then
             SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
               -name sdkmanager \
               -type f \
@@ -98,7 +93,7 @@ jobs:
           echo "sdkmanager: $SDKMANAGER"
 
           echo ""
-          echo "Accepting Android licenses..."
+          echo "Accepting licenses..."
 
           yes | "$SDKMANAGER" --licenses \
             >/dev/null 2>&1 || true
@@ -112,11 +107,11 @@ jobs:
             "build-tools;35.0.0"
 
           echo ""
-          echo "ANDROID SDK READY"
+          echo "Android SDK ready."
 
 
       # ==========================================
-      # GRADLE 8.9
+      # GRADLE
       # ==========================================
 
       - name: Setup Gradle
@@ -178,7 +173,7 @@ jobs:
 
 
       # ==========================================
-      # CREATE PROJECT
+      # CREATE ANDROID PROJECT
       # ==========================================
 
       - name: Create Android Project
@@ -206,9 +201,7 @@ jobs:
           cat > gradle.properties <<'EOF'
           android.useAndroidX=true
           android.enableJetifier=true
-
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-
           org.gradle.parallel=true
           org.gradle.caching=true
           EOF
@@ -254,11 +247,8 @@ jobs:
           }
 
           allprojects {
-
               configurations.configureEach {
-
                   resolutionStrategy {
-
                       force(
                           "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
                       )
@@ -285,38 +275,31 @@ jobs:
               id 'com.android.application'
           }
 
-
           def webUrl =
               project.findProperty("WEB_URL")
               ?: "https://example.com"
-
 
           def appName =
               project.findProperty("APP_NAME")
               ?: "Web APK"
 
-
           def packageName =
               project.findProperty("PACKAGE_NAME")
               ?: "com.tamzdev.webapk"
-
 
           webUrl = webUrl
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
 
-
           appName = appName
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
-
 
           android {
 
               namespace "com.tamzdev.webapk"
 
               compileSdk 35
-
 
               defaultConfig {
 
@@ -331,12 +314,9 @@ jobs:
                   versionName "1.0"
               }
 
-
               buildFeatures {
-
                   buildConfig true
               }
-
 
               buildTypes {
 
@@ -354,7 +334,6 @@ jobs:
                           "\"${appName}\""
                       )
                   }
-
 
                   release {
 
@@ -376,7 +355,6 @@ jobs:
                   }
               }
           }
-
 
           dependencies {
 
@@ -532,11 +510,9 @@ jobs:
 
                   settings.setDisplayZoomControls(false);
 
-
                   webView.setWebChromeClient(
                       new WebChromeClient()
                   );
-
 
                   webView.setWebViewClient(
                       new WebViewClient() {
@@ -559,9 +535,7 @@ jobs:
                       }
                   );
 
-
                   setContentView(webView);
-
 
                   webView.loadUrl(
                       BuildConfig.WEB_URL
@@ -632,26 +606,8 @@ jobs:
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/java/com/tamzdev/webapk/MainActivity.java
 
-          echo "Project verification OK."
-
-
-      # ==========================================
-      # SHOW DEPENDENCIES
-      # ==========================================
-
-      - name: Check Dependencies
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "CHECKING DEPENDENCIES"
-          echo "=========================================="
-
-          gradle \
-            --no-daemon \
-            dependencies \
-            --configuration debugRuntimeClasspath
+          echo ""
+          echo "PROJECT VERIFICATION OK."
 
 
       # ==========================================
@@ -704,6 +660,10 @@ jobs:
 
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
+          echo "=========================================="
+          echo "CHECKING APK"
+          echo "=========================================="
+
           if [ ! -f "$APK" ]; then
 
             echo "ERROR: APK tidak ditemukan."
@@ -716,14 +676,13 @@ jobs:
             exit 1
           fi
 
-          echo "APK ditemukan:"
           ls -lh "$APK"
 
           file "$APK"
 
 
       # ==========================================
-      # PREPARE APK
+      # PREPARE OUTPUT
       # ==========================================
 
       - name: Prepare APK
@@ -740,12 +699,11 @@ jobs:
 
           SAFE_APP_NAME="${SAFE_APP_NAME//\//-}"
 
-          SAFE_APP_NAME="${SAFE_APP_NAME//\\/ -}"
-
           cp \
             app/build/outputs/apk/debug/app-debug.apk \
             "output/${SAFE_APP_NAME}-debug.apk"
 
+          echo ""
           echo "=========================================="
           echo "FINAL APK"
           echo "=========================================="
@@ -759,6 +717,7 @@ jobs:
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+
         with:
           name: web-to-apk
           path: output/*.apk
