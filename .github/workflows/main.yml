@@ -21,59 +21,53 @@ on:
         type: string
         default: "com.tamzdev.webapk"
 
-
 jobs:
   build-apk:
-
     name: Build APK
-
     runs-on: ubuntu-latest
-
 
     steps:
 
-      # =========================================
+      # ==========================================
       # CHECKOUT
-      # =========================================
-
+      # ==========================================
       - name: Checkout
-
         uses: actions/checkout@v4
 
 
-      # =========================================
+      # ==========================================
       # JAVA 17
-      # =========================================
-
+      # ==========================================
       - name: Setup Java 17
-
         uses: actions/setup-java@v4
-
         with:
           distribution: temurin
           java-version: "17"
 
 
-      # =========================================
+      # ==========================================
       # ANDROID SDK
-      # =========================================
-
+      # ==========================================
       - name: Setup Android SDK
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "=========================================="
-          echo "ANDROID SDK"
+          echo "ANDROID SDK SETUP"
           echo "=========================================="
 
-          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 
           echo "ANDROID_HOME=$ANDROID_HOME"
+
+          if [ ! -d "$ANDROID_HOME" ]; then
+            echo "ERROR: Android SDK tidak ditemukan."
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
@@ -81,23 +75,29 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
           if [ ! -f "$SDKMANAGER" ]; then
+            echo "sdkmanager tidak ditemukan."
 
-            echo "sdkmanager not found."
+            echo "Mencari sdkmanager..."
 
-            find "$ANDROID_HOME/cmdline-tools" \
+            find "$ANDROID_HOME" \
               -name sdkmanager \
               -type f \
               -print
 
             exit 1
-
           fi
 
-          echo "Accepting licenses..."
+          echo ""
+          echo "sdkmanager ditemukan:"
+          echo "$SDKMANAGER"
 
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          echo ""
+          echo "Accepting Android SDK licenses..."
 
-          echo "Installing Android packages..."
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          echo ""
+          echo "Installing Android SDK packages..."
 
           "$SDKMANAGER" \
             "platform-tools" \
@@ -105,174 +105,151 @@ jobs:
             "build-tools;35.0.0"
 
           echo ""
-          echo "Android SDK ready."
+          echo "=========================================="
+          echo "ANDROID SDK READY"
+          echo "=========================================="
 
 
-      # =========================================
-      # GRADLE
-      # =========================================
-
+      # ==========================================
+      # GRADLE 8.9
+      # ==========================================
       - name: Setup Gradle
-
         uses: gradle/actions/setup-gradle@v4
-
         with:
           gradle-version: "8.9"
 
 
-      # =========================================
-      # CREATE PROJECT
-      # =========================================
-
+      # ==========================================
+      # CREATE ANDROID PROJECT
+      # ==========================================
       - name: Create Android Project
-
         shell: bash
-
         env:
           APP_NAME: ${{ inputs.app_name }}
           PACKAGE_NAME: ${{ inputs.package_name }}
           WEB_URL: ${{ inputs.url }}
 
         run: |
-
           set -e
 
           echo "=========================================="
           echo "CREATING ANDROID PROJECT"
           echo "=========================================="
 
-          echo "APP      : $APP_NAME"
-          echo "PACKAGE  : $PACKAGE_NAME"
-          echo "URL      : $WEB_URL"
+          echo "APP NAME     : $APP_NAME"
+          echo "PACKAGE NAME : $PACKAGE_NAME"
+          echo "WEB URL      : $WEB_URL"
 
+          # --------------------------------------
+          # VALIDATE PACKAGE NAME
+          # --------------------------------------
 
-          mkdir -p \
-            app/src/main/java/com/tamzdev/webapk
+          if [[ ! "$PACKAGE_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$ ]]; then
+            echo ""
+            echo "ERROR: Package name tidak valid."
+            echo ""
+            echo "Contoh:"
+            echo "com.tamzdev.webapk"
+            echo "com.example.myapp"
+            echo ""
+            exit 1
+          fi
 
-          mkdir -p \
-            app/src/main/res/values
+          # --------------------------------------
+          # CREATE DIRECTORIES
+          # --------------------------------------
 
+          mkdir -p app/src/main/java/com/tamzdev/webapk
+          mkdir -p app/src/main/res/values
 
           # ======================================
           # GRADLE PROPERTIES
           # ======================================
 
           cat > gradle.properties <<'EOF'
-
           android.useAndroidX=true
           android.enableJetifier=true
-
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-
           org.gradle.parallel=true
-
           org.gradle.caching=true
-
           EOF
 
 
           # ======================================
-          # SETTINGS
+          # SETTINGS GRADLE
           # ======================================
 
           cat > settings.gradle <<'EOF'
-
           pluginManagement {
-
               repositories {
-
                   google()
-
                   mavenCentral()
-
                   gradlePluginPortal()
               }
           }
 
-
           dependencyResolutionManagement {
-
               repositoriesMode.set(
                   RepositoriesMode.FAIL_ON_PROJECT_REPOS
               )
 
-
               repositories {
-
                   google()
-
                   mavenCentral()
               }
           }
 
-
           rootProject.name = "WebToAPK"
 
           include(":app")
-
           EOF
 
 
           # ======================================
-          # ROOT BUILD
+          # ROOT BUILD.GRADLE
           # ======================================
 
           cat > build.gradle <<'EOF'
-
           plugins {
-
-              id 'com.android.application'
-                  version '8.7.3'
-                  apply false
+              id 'com.android.application' version '8.7.3' apply false
           }
-
           EOF
 
 
           # ======================================
-          # APP BUILD
+          # APP BUILD.GRADLE
           # ======================================
 
           cat > app/build.gradle <<'EOF'
-
           plugins {
-
               id 'com.android.application'
           }
-
 
           def webUrl =
               project.findProperty("WEB_URL")
               ?: "https://example.com"
 
-
           def appName =
               project.findProperty("APP_NAME")
               ?: "Web APK"
-
 
           def packageName =
               project.findProperty("PACKAGE_NAME")
               ?: "com.tamzdev.webapk"
 
-
           webUrl = webUrl
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
-
 
           appName = appName
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
 
-
           android {
 
               namespace "com.tamzdev.webapk"
 
-
               compileSdk 35
-
 
               defaultConfig {
 
@@ -287,15 +264,11 @@ jobs:
                   versionName "1.0"
               }
 
-
               buildFeatures {
-
                   buildConfig true
               }
 
-
               buildTypes {
-
 
                   debug {
 
@@ -305,7 +278,6 @@ jobs:
                           "\"${webUrl}\""
                       )
 
-
                       resValue(
                           "string",
                           "app_name",
@@ -313,20 +285,17 @@ jobs:
                       )
                   }
 
-
                   release {
 
                       minifyEnabled false
 
                       shrinkResources false
 
-
                       buildConfigField(
                           "String",
                           "WEB_URL",
                           "\"${webUrl}\""
                       )
-
 
                       resValue(
                           "string",
@@ -337,132 +306,98 @@ jobs:
               }
           }
 
-
           dependencies {
 
               implementation(
                   "androidx.appcompat:appcompat:1.7.0"
               )
 
-
               implementation(
                   "androidx.webkit:webkit:1.12.1"
               )
           }
-
           EOF
 
 
           # ======================================
-          # MANIFEST
+          # ANDROID MANIFEST
           # ======================================
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
-
           <?xml version="1.0" encoding="utf-8"?>
 
           <manifest
               xmlns:android="http://schemas.android.com/apk/res/android">
 
-
               <uses-permission
                   android:name="android.permission.INTERNET" />
 
-
               <application
-
                   android:allowBackup="true"
-
                   android:supportsRtl="true"
-
                   android:usesCleartextTraffic="true"
-
                   android:label="@string/app_name"
-
                   android:theme="@style/AppTheme">
 
-
                   <activity
-
                       android:name=".MainActivity"
-
                       android:exported="true"
-
-
                       android:screenOrientation="portrait">
-
 
                       <intent-filter>
 
                           <action
                               android:name="android.intent.action.MAIN" />
 
-
                           <category
                               android:name="android.intent.category.LAUNCHER" />
 
                       </intent-filter>
 
-
                   </activity>
-
 
               </application>
 
-
           </manifest>
-
           EOF
 
 
           # ======================================
-          # STYLE
+          # STYLES
           # ======================================
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
-
           <?xml version="1.0" encoding="utf-8"?>
 
           <resources>
 
-
               <style
-
                   name="AppTheme"
-
                   parent="android:style/Theme.Material.Light.NoActionBar">
-
 
                   <item name="android:fontFamily">
                       sans
                   </item>
 
-
                   <item name="android:colorAccent">
                       #7C3AED
                   </item>
-
 
                   <item name="android:statusBarColor">
                       #000000
                   </item>
 
-
                   <item name="android:navigationBarColor">
                       #000000
                   </item>
-
 
                   <item name="android:windowLightStatusBar">
                       false
                   </item>
 
-
               </style>
 
-
           </resources>
-
           EOF
 
 
@@ -471,115 +406,75 @@ jobs:
           # ======================================
 
           cat > app/src/main/java/com/tamzdev/webapk/MainActivity.java <<'EOF'
-
           package com.tamzdev.webapk;
 
-
           import android.annotation.SuppressLint;
-
           import android.app.Activity;
-
           import android.os.Bundle;
-
-          import android.view.View;
-
           import android.webkit.WebChromeClient;
-
           import android.webkit.WebResourceRequest;
-
           import android.webkit.WebSettings;
-
           import android.webkit.WebView;
-
           import android.webkit.WebViewClient;
-
 
           public class MainActivity extends Activity {
 
-
               private WebView webView;
 
-
               @SuppressLint("SetJavaScriptEnabled")
-
               @Override
-
               protected void onCreate(
                   Bundle savedInstanceState
               ) {
-
                   super.onCreate(savedInstanceState);
 
-
-                  webView =
-                      new WebView(this);
-
+                  webView = new WebView(this);
 
                   WebSettings settings =
                       webView.getSettings();
 
+                  // JavaScript
+                  settings.setJavaScriptEnabled(true);
 
-                  settings.setJavaScriptEnabled(
-                      true
-                  );
+                  // Local storage
+                  settings.setDomStorageEnabled(true);
 
+                  settings.setDatabaseEnabled(true);
 
-                  settings.setDomStorageEnabled(
-                      true
-                  );
+                  // File/content access
+                  settings.setAllowFileAccess(true);
 
+                  settings.setAllowContentAccess(true);
 
-                  settings.setDatabaseEnabled(
-                      true
-                  );
-
-
-                  settings.setAllowFileAccess(
-                      true
-                  );
-
-
-                  settings.setAllowContentAccess(
-                      true
-                  );
-
-
+                  // Windows
                   settings.setJavaScriptCanOpenWindowsAutomatically(
                       true
                   );
-
 
                   settings.setSupportMultipleWindows(
                       true
                   );
 
-
+                  // Media
                   settings.setMediaPlaybackRequiresUserGesture(
                       false
                   );
 
+                  // Zoom
+                  settings.setBuiltInZoomControls(false);
 
-                  settings.setBuiltInZoomControls(
-                      false
-                  );
+                  settings.setDisplayZoomControls(false);
 
-
-                  settings.setDisplayZoomControls(
-                      false
-                  );
-
-
+                  // Chrome client
                   webView.setWebChromeClient(
                       new WebChromeClient()
                   );
 
-
+                  // WebView client
                   webView.setWebViewClient(
                       new WebViewClient() {
 
-
                           @Override
-
                           public boolean
                           shouldOverrideUrlLoading(
                               WebView view,
@@ -592,15 +487,12 @@ jobs:
                                       .toString()
                               );
 
-
                               return true;
                           }
                       }
                   );
 
-
                   setContentView(webView);
-
 
                   webView.loadUrl(
                       BuildConfig.WEB_URL
@@ -608,8 +500,11 @@ jobs:
               }
 
 
-              @Override
+              // ==================================
+              // ANDROID BACK BUTTON
+              // ==================================
 
+              @Override
               public void onBackPressed() {
 
                   if (
@@ -622,12 +517,16 @@ jobs:
                   } else {
 
                       super.onBackPressed();
+
                   }
               }
 
 
-              @Override
+              // ==================================
+              // CLEANUP
+              // ==================================
 
+              @Override
               protected void onDestroy() {
 
                   if (webView != null) {
@@ -639,66 +538,65 @@ jobs:
                       webView = null;
                   }
 
-
                   super.onDestroy();
               }
           }
-
           EOF
 
 
           echo ""
+          echo "=========================================="
           echo "ANDROID PROJECT CREATED"
-          echo ""
+          echo "=========================================="
+
+          find . -maxdepth 5 -type f | sort
 
 
-      # =========================================
-      # VERIFY
-      # =========================================
-
+      # ==========================================
+      # VERIFY PROJECT
+      # ==========================================
       - name: Verify Project
-
         shell: bash
-
         run: |
-
           set -e
 
+          echo "=========================================="
+          echo "VERIFYING PROJECT"
+          echo "=========================================="
+
           test -f gradle.properties
-
           test -f settings.gradle
-
           test -f build.gradle
-
           test -f app/build.gradle
-
           test -f app/src/main/AndroidManifest.xml
-
+          test -f app/src/main/res/values/styles.xml
           test -f app/src/main/java/com/tamzdev/webapk/MainActivity.java
 
+          echo ""
+          echo "All required files exist."
           echo "Project verification OK."
 
 
-      # =========================================
-      # BUILD APK
-      # =========================================
-
+      # ==========================================
+      # BUILD DEBUG APK
+      # ==========================================
       - name: Build Debug APK
-
         shell: bash
-
         env:
           WEB_URL: ${{ inputs.url }}
           PACKAGE_NAME: ${{ inputs.package_name }}
           APP_NAME: ${{ inputs.app_name }}
 
         run: |
-
           set -e
 
           echo "=========================================="
-          echo "BUILDING APK"
+          echo "BUILDING DEBUG APK"
           echo "=========================================="
+
+          echo "URL     : $WEB_URL"
+          echo "APP     : $APP_NAME"
+          echo "PACKAGE : $PACKAGE_NAME"
 
           gradle \
             --no-daemon \
@@ -708,70 +606,60 @@ jobs:
             -PAPP_NAME="$APP_NAME" \
             :app:assembleDebug
 
-
           echo ""
-          echo "APK BUILD SUCCESS."
+          echo "=========================================="
+          echo "APK BUILD SUCCESS"
+          echo "=========================================="
 
 
-      # =========================================
+      # ==========================================
       # PREPARE APK
-      # =========================================
-
+      # ==========================================
       - name: Prepare APK
-
         shell: bash
-
         env:
           APP_NAME: ${{ inputs.app_name }}
 
         run: |
-
           set -e
 
           mkdir -p output
-
 
           cp \
             app/build/outputs/apk/debug/app-debug.apk \
             "output/${APP_NAME}-debug.apk"
 
-
+          echo ""
+          echo "=========================================="
+          echo "APK OUTPUT"
           echo "=========================================="
 
           ls -lh output/
 
 
-      # =========================================
-      # UPLOAD
-      # =========================================
-
+      # ==========================================
+      # UPLOAD APK ARTIFACT
+      # ==========================================
       - name: Upload APK
-
         uses: actions/upload-artifact@v4
-
         with:
-
           name: web-to-apk
-
           path: output/*.apk
-
           if-no-files-found: error
-
           retention-days: 30
 
 
-      # =========================================
+      # ==========================================
       # DONE
-      # =========================================
-
+      # ==========================================
       - name: Build Complete
-
         run: |
-
           echo ""
           echo "=========================================="
           echo "          BUILD BERHASIL"
           echo "=========================================="
           echo ""
-          echo "APK tersedia di Artifacts."
+          echo "APK tersedia di:"
+          echo "Actions -> Artifacts -> web-to-apk"
           echo ""
+          echo "=========================================="
