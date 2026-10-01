@@ -21,6 +21,7 @@ on:
         type: string
         default: "com.tamzdev.webapk"
 
+
 jobs:
   build-apk:
     name: Build APK
@@ -31,6 +32,7 @@ jobs:
       # ==========================================
       # CHECKOUT
       # ==========================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,6 +40,7 @@ jobs:
       # ==========================================
       # JAVA 17
       # ==========================================
+
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -48,6 +51,7 @@ jobs:
       # ==========================================
       # ANDROID SDK
       # ==========================================
+
       - name: Setup Android SDK
         shell: bash
         run: |
@@ -69,35 +73,38 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
+            echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          fi
+
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER=""
 
-          if [ ! -f "$SDKMANAGER" ]; then
-            echo "sdkmanager tidak ditemukan."
-
-            echo "Mencari sdkmanager..."
-
-            find "$ANDROID_HOME" \
+          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
               -name sdkmanager \
               -type f \
-              -print
+              2>/dev/null | head -n 1 || true)
+          fi
 
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager tidak ditemukan."
             exit 1
           fi
 
-          echo ""
-          echo "sdkmanager ditemukan:"
-          echo "$SDKMANAGER"
+          echo "sdkmanager: $SDKMANAGER"
 
           echo ""
-          echo "Accepting Android SDK licenses..."
+          echo "Accepting Android licenses..."
 
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          yes | "$SDKMANAGER" --licenses \
+            >/dev/null 2>&1 || true
 
           echo ""
-          echo "Installing Android SDK packages..."
+          echo "Installing Android packages..."
 
           "$SDKMANAGER" \
             "platform-tools" \
@@ -105,14 +112,13 @@ jobs:
             "build-tools;35.0.0"
 
           echo ""
-          echo "=========================================="
           echo "ANDROID SDK READY"
-          echo "=========================================="
 
 
       # ==========================================
       # GRADLE 8.9
       # ==========================================
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -120,8 +126,61 @@ jobs:
 
 
       # ==========================================
-      # CREATE ANDROID PROJECT
+      # VALIDATE INPUT
       # ==========================================
+
+      - name: Validate Inputs
+        shell: bash
+        env:
+          WEB_URL: ${{ inputs.url }}
+          APP_NAME: ${{ inputs.app_name }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "VALIDATING INPUT"
+          echo "=========================================="
+
+          echo "URL     : $WEB_URL"
+          echo "APP     : $APP_NAME"
+          echo "PACKAGE : $PACKAGE_NAME"
+
+          if [ -z "$WEB_URL" ]; then
+            echo "ERROR: URL kosong."
+            exit 1
+          fi
+
+          if [ -z "$APP_NAME" ]; then
+            echo "ERROR: App name kosong."
+            exit 1
+          fi
+
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "ERROR: Package name kosong."
+            exit 1
+          fi
+
+          if [[ ! "$WEB_URL" =~ ^https?:// ]]; then
+            echo "ERROR: URL harus diawali http:// atau https://"
+            exit 1
+          fi
+
+          if [[ ! "$PACKAGE_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$ ]]; then
+            echo "ERROR: Package name tidak valid."
+            echo "Contoh: com.tamzdev.webapk"
+            exit 1
+          fi
+
+          echo ""
+          echo "INPUT VALID."
+
+
+      # ==========================================
+      # CREATE PROJECT
+      # ==========================================
+
       - name: Create Android Project
         shell: bash
         env:
@@ -136,48 +195,28 @@ jobs:
           echo "CREATING ANDROID PROJECT"
           echo "=========================================="
 
-          echo "APP NAME     : $APP_NAME"
-          echo "PACKAGE NAME : $PACKAGE_NAME"
-          echo "WEB URL      : $WEB_URL"
-
-          # --------------------------------------
-          # VALIDATE PACKAGE NAME
-          # --------------------------------------
-
-          if [[ ! "$PACKAGE_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$ ]]; then
-            echo ""
-            echo "ERROR: Package name tidak valid."
-            echo ""
-            echo "Contoh:"
-            echo "com.tamzdev.webapk"
-            echo "com.example.myapp"
-            echo ""
-            exit 1
-          fi
-
-          # --------------------------------------
-          # CREATE DIRECTORIES
-          # --------------------------------------
-
           mkdir -p app/src/main/java/com/tamzdev/webapk
           mkdir -p app/src/main/res/values
 
-          # ======================================
+
+          # ========================================
           # GRADLE PROPERTIES
-          # ======================================
+          # ========================================
 
           cat > gradle.properties <<'EOF'
           android.useAndroidX=true
           android.enableJetifier=true
+
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+
           org.gradle.parallel=true
           org.gradle.caching=true
           EOF
 
 
-          # ======================================
-          # SETTINGS GRADLE
-          # ======================================
+          # ========================================
+          # SETTINGS
+          # ========================================
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -205,51 +244,79 @@ jobs:
           EOF
 
 
-          # ======================================
+          # ========================================
           # ROOT BUILD.GRADLE
-          # ======================================
+          # ========================================
 
           cat > build.gradle <<'EOF'
           plugins {
               id 'com.android.application' version '8.7.3' apply false
           }
+
+          allprojects {
+
+              configurations.configureEach {
+
+                  resolutionStrategy {
+
+                      force(
+                          "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
+                      )
+
+                      force(
+                          "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22"
+                      )
+
+                      force(
+                          "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"
+                      )
+                  }
+              }
+          }
           EOF
 
 
-          # ======================================
+          # ========================================
           # APP BUILD.GRADLE
-          # ======================================
+          # ========================================
 
           cat > app/build.gradle <<'EOF'
           plugins {
               id 'com.android.application'
           }
 
+
           def webUrl =
               project.findProperty("WEB_URL")
               ?: "https://example.com"
+
 
           def appName =
               project.findProperty("APP_NAME")
               ?: "Web APK"
 
+
           def packageName =
               project.findProperty("PACKAGE_NAME")
               ?: "com.tamzdev.webapk"
+
 
           webUrl = webUrl
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
 
+
           appName = appName
               .replace("\\", "\\\\")
               .replace("\"", "\\\"")
+
 
           android {
 
               namespace "com.tamzdev.webapk"
 
               compileSdk 35
+
 
               defaultConfig {
 
@@ -264,9 +331,12 @@ jobs:
                   versionName "1.0"
               }
 
+
               buildFeatures {
+
                   buildConfig true
               }
+
 
               buildTypes {
 
@@ -284,6 +354,7 @@ jobs:
                           "\"${appName}\""
                       )
                   }
+
 
                   release {
 
@@ -306,6 +377,7 @@ jobs:
               }
           }
 
+
           dependencies {
 
               implementation(
@@ -319,9 +391,9 @@ jobs:
           EOF
 
 
-          # ======================================
-          # ANDROID MANIFEST
-          # ======================================
+          # ========================================
+          # MANIFEST
+          # ========================================
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -362,9 +434,9 @@ jobs:
           EOF
 
 
-          # ======================================
-          # STYLES
-          # ======================================
+          # ========================================
+          # STYLE
+          # ========================================
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -401,9 +473,9 @@ jobs:
           EOF
 
 
-          # ======================================
+          # ========================================
           # MAIN ACTIVITY
-          # ======================================
+          # ========================================
 
           cat > app/src/main/java/com/tamzdev/webapk/MainActivity.java <<'EOF'
           package com.tamzdev.webapk;
@@ -426,6 +498,7 @@ jobs:
               protected void onCreate(
                   Bundle savedInstanceState
               ) {
+
                   super.onCreate(savedInstanceState);
 
                   webView = new WebView(this);
@@ -433,20 +506,16 @@ jobs:
                   WebSettings settings =
                       webView.getSettings();
 
-                  // JavaScript
                   settings.setJavaScriptEnabled(true);
 
-                  // Local storage
                   settings.setDomStorageEnabled(true);
 
                   settings.setDatabaseEnabled(true);
 
-                  // File/content access
                   settings.setAllowFileAccess(true);
 
                   settings.setAllowContentAccess(true);
 
-                  // Windows
                   settings.setJavaScriptCanOpenWindowsAutomatically(
                       true
                   );
@@ -455,22 +524,20 @@ jobs:
                       true
                   );
 
-                  // Media
                   settings.setMediaPlaybackRequiresUserGesture(
                       false
                   );
 
-                  // Zoom
                   settings.setBuiltInZoomControls(false);
 
                   settings.setDisplayZoomControls(false);
 
-                  // Chrome client
+
                   webView.setWebChromeClient(
                       new WebChromeClient()
                   );
 
-                  // WebView client
+
                   webView.setWebViewClient(
                       new WebViewClient() {
 
@@ -492,17 +559,15 @@ jobs:
                       }
                   );
 
+
                   setContentView(webView);
+
 
                   webView.loadUrl(
                       BuildConfig.WEB_URL
                   );
               }
 
-
-              // ==================================
-              // ANDROID BACK BUTTON
-              // ==================================
 
               @Override
               public void onBackPressed() {
@@ -521,10 +586,6 @@ jobs:
                   }
               }
 
-
-              // ==================================
-              // CLEANUP
-              // ==================================
 
               @Override
               protected void onDestroy() {
@@ -549,12 +610,11 @@ jobs:
           echo "ANDROID PROJECT CREATED"
           echo "=========================================="
 
-          find . -maxdepth 5 -type f | sort
-
 
       # ==========================================
       # VERIFY PROJECT
       # ==========================================
+
       - name: Verify Project
         shell: bash
         run: |
@@ -572,14 +632,32 @@ jobs:
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/java/com/tamzdev/webapk/MainActivity.java
 
-          echo ""
-          echo "All required files exist."
           echo "Project verification OK."
+
+
+      # ==========================================
+      # SHOW DEPENDENCIES
+      # ==========================================
+
+      - name: Check Dependencies
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "CHECKING DEPENDENCIES"
+          echo "=========================================="
+
+          gradle \
+            --no-daemon \
+            dependencies \
+            --configuration debugRuntimeClasspath
 
 
       # ==========================================
       # BUILD DEBUG APK
       # ==========================================
+
       - name: Build Debug APK
         shell: bash
         env:
@@ -588,7 +666,7 @@ jobs:
           APP_NAME: ${{ inputs.app_name }}
 
         run: |
-          set -e
+          set -o pipefail
 
           echo "=========================================="
           echo "BUILDING DEBUG APK"
@@ -598,9 +676,12 @@ jobs:
           echo "APP     : $APP_NAME"
           echo "PACKAGE : $PACKAGE_NAME"
 
+          echo ""
+
           gradle \
             --no-daemon \
             --stacktrace \
+            --info \
             -PWEB_URL="$WEB_URL" \
             -PPACKAGE_NAME="$PACKAGE_NAME" \
             -PAPP_NAME="$APP_NAME" \
@@ -613,8 +694,38 @@ jobs:
 
 
       # ==========================================
+      # CHECK APK
+      # ==========================================
+
+      - name: Check APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+
+            echo "ERROR: APK tidak ditemukan."
+
+            find app/build \
+              -type f \
+              2>/dev/null \
+              | sort || true
+
+            exit 1
+          fi
+
+          echo "APK ditemukan:"
+          ls -lh "$APK"
+
+          file "$APK"
+
+
+      # ==========================================
       # PREPARE APK
       # ==========================================
+
       - name: Prepare APK
         shell: bash
         env:
@@ -625,21 +736,27 @@ jobs:
 
           mkdir -p output
 
+          SAFE_APP_NAME="$APP_NAME"
+
+          SAFE_APP_NAME="${SAFE_APP_NAME//\//-}"
+
+          SAFE_APP_NAME="${SAFE_APP_NAME//\\/ -}"
+
           cp \
             app/build/outputs/apk/debug/app-debug.apk \
-            "output/${APP_NAME}-debug.apk"
+            "output/${SAFE_APP_NAME}-debug.apk"
 
-          echo ""
           echo "=========================================="
-          echo "APK OUTPUT"
+          echo "FINAL APK"
           echo "=========================================="
 
           ls -lh output/
 
 
       # ==========================================
-      # UPLOAD APK ARTIFACT
+      # UPLOAD APK
       # ==========================================
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -650,8 +767,9 @@ jobs:
 
 
       # ==========================================
-      # DONE
+      # COMPLETE
       # ==========================================
+
       - name: Build Complete
         run: |
           echo ""
@@ -659,7 +777,6 @@ jobs:
           echo "          BUILD BERHASIL"
           echo "=========================================="
           echo ""
-          echo "APK tersedia di:"
-          echo "Actions -> Artifacts -> web-to-apk"
+          echo "APK tersedia di Artifacts."
           echo ""
           echo "=========================================="
